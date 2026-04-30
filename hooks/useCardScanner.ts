@@ -1,32 +1,49 @@
 // ─── Hook principal scan carte ───────────────────────────────────
+// Compose useOcr + useScanStore + getCardPrice.
+// Entrée : imageUri (photo prise par expo-camera)
+// Sortie  : ScanResult complet dans le store (card + price + confidence)
+import { useCallback } from 'react';
+
+// ─── Hooks & store ────────────────────────────────────────────────
+import { useOcr } from './useOcr';
 import { useScanStore } from '../store';
-import { extractCardName, normalizeCardName, detectLanguage } from '../lib/ocr/extractor';
+
+// ─── Lib ──────────────────────────────────────────────────────────
+import { extractCardName, normalizeCardName } from '../lib/ocr/extractor';
 import { getCardPrice } from '../lib/price';
-import type { CardLanguage, GameType } from '../types/card';
+
+// ─── Types ────────────────────────────────────────────────────────
+import type { GameType } from '../types/card';
 
 export function useCardScanner() {
+  const { recognizeFromUri, isProcessing: isOcrProcessing, ocrError } = useOcr();
   const { isScanning, currentResult, error, setScanning, setResult, setError, reset } =
     useScanStore();
 
   /**
-   * Pipeline complet : OCR → identification → prix NM Cardmarket
-   * @param rawOcrText  Texte brut retourné par ML Kit
-   * @param game        Jeu détecté (mtg | pokemon | yugioh)
+   * Pipeline complet : imageUri → OCR → extraction nom → prix NM Cardmarket
+   * @param imageUri  URI de la photo capturée par expo-camera
+   * @param game      Jeu détecté par l'utilisateur ou heuristique (mtg | pokemon | yugioh)
    */
-  async function scanCard(rawOcrText: string, game: GameType): Promise<void> {
+  const scanCard = useCallback(async (imageUri: string, game: GameType): Promise<void> => {
     setScanning(true);
     try {
-      // Étape 1 : extraire le nom + détecter la langue depuis l'OCR
-      const rawName = extractCardName(rawOcrText);
-      const language: CardLanguage = detectLanguage(rawOcrText);
-      const nameEn = normalizeCardName(rawName);
+      // Étape 1 : OCR on-device via ML Kit
+      const ocr = await recognizeFromUri(imageUri);
+      if (!ocr) {
+        setError('Aucun texte détecté — repositionner la carte');
+        return;
+      }
 
+      // Étape 2 : Extraction nom depuis le texte brut OCR
+      const rawName = extractCardName(ocr.text);
+      const nameEn = normalizeCardName(rawName);
       if (!nameEn) {
         setError('Nom de carte non détecté — réessayer');
         return;
       }
 
-      // Étape 2 : TODO P2 — identification via API (Scryfall / PokéAPI / YGOPro)
+      // Étape 3 : Construction stub card (P2 : identification API complète)
       const card = {
         id: `pending-${Date.now()}`,
         name: rawName,
@@ -35,14 +52,14 @@ export function useCardScanner() {
         set: '',
         setCode: '',
         number: '',
-        language,
+        language: ocr.language,
         imageUrl: null,
         oracleId: null,
         cardmarketId: null,
       };
 
-      // Étape 3 : prix NM — pipeline cache → scraping → fallback
-      const priceResult = await getCardPrice(card.id, nameEn, game, language);
+      // Étape 4 : Prix NM — pipeline cache → scraping Cardmarket → fallback API
+      const priceResult = await getCardPrice(card.id, nameEn, game, ocr.language);
 
       setResult({
         card,
@@ -57,7 +74,7 @@ export function useCardScanner() {
               cardmarketUrl: priceResult.productUrl,
             }
           : null,
-        confidence: 0.7, // TODO P1 : lire confidence réelle depuis ML Kit
+        confidence: ocr.confidence,
         scannedAt: new Date().toISOString(),
       });
     } catch (err) {
@@ -65,7 +82,13 @@ export function useCardScanner() {
     } finally {
       setScanning(false);
     }
-  }
+  }, [recognizeFromUri, setScanning, setResult, setError]);
 
-  return { isScanning, currentResult, error, scanCard, reset };
+  return {
+    isScanning: isScanning || isOcrProcessing,
+    currentResult,
+    error: error ?? ocrError,
+    scanCard,
+    reset,
+  };
 }
