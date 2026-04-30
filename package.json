@@ -9,6 +9,7 @@
     "web": "expo start --web"
   },
   "dependencies": {
+    "@expo/metro-runtime": "~6.1.2",
     "@react-native-ml-kit/text-recognition": "^2.0.0",
     "css-select": "^7.0.0",
     "domutils": "^4.0.2",
