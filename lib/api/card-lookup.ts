@@ -56,21 +56,8 @@ export async function identifyCard(
     return { card, confidence: 0.9, source: gameToSource(game) };
   }
 
-  // Fallback — essayer les autres jeux séquentiellement
-  const otherGames = (['mtg', 'pokemon', 'yugioh'] as GameType[]).filter(
-    (g) => g !== game
-  );
-  for (const fallbackGame of otherGames) {
-    const fallbackCard = await handlers[fallbackGame]().catch(() => null);
-    if (fallbackCard) {
-      return {
-        card: { ...fallbackCard, game: fallbackGame },
-        confidence: 0.6, // pénalité — jeu déduit automatiquement
-        source: gameToSource(fallbackGame),
-      };
-    }
-  }
-
+  // Pas de fallback cross-jeu — l'utilisateur a sélectionné le jeu explicitement
+  // Un fallback vers YGO/Pokémon sur une carte MTG retournerait de faux résultats
   return null;
 }
 
