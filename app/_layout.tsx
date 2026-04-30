@@ -1,8 +1,14 @@
+import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 
 import { Colors } from '../constants/colors';
+import { initPriceCache } from '../lib/price';
 
 export default function RootLayout() {
+  useEffect(() => {
+    initPriceCache().catch(() => {});
+  }, []);
+
   return (
     <Stack
       screenOptions={{
