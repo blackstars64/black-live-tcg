@@ -39,12 +39,6 @@
           "cameraPermission": "BlackLiveTCG a besoin de la caméra pour scanner vos cartes TCG."
         }
       ],
-      [
-        "react-native-vision-camera",
-        {
-          "cameraPermissionText": "BlackLiveTCG a besoin de la caméra pour scanner vos cartes TCG."
-        }
-      ],
       "expo-sqlite"
     ]
   }
