@@ -141,11 +141,12 @@ export async function identifyMtgCard(
   const encodedName = encodeURIComponent(ocrName);
   const scryfallLang = LANG_TO_SCRYFALL[language];
 
-  // Étape 1 : recherche par nom imprimé dans la langue détectée
-  // name:culture lang:fr → substring match → trouve "Rotation des cultures"
+  // Étape 1 : recherche plein-texte dans la langue détectée
+  // q=culture lang:fr → cherche dans TOUT le texte FR (noms imprimés inclus)
+  // "culture" trouve "Rotation des cultures" car Scryfall indexe les noms FR
   if (scryfallLang && language !== 'en') {
     const langSearch = await scryfallSearchFetch(
-      `${BASE_URL}/cards/search?q=name:${encodedName}+lang:${scryfallLang}&unique=prints&order=released`
+      `${BASE_URL}/cards/search?q=${encodedName}+lang:${scryfallLang}&unique=prints&order=released`
     );
     if (langSearch) return normalizeScryfallCard(langSearch, language);
 
@@ -153,7 +154,7 @@ export async function identifyMtgCard(
     const firstWord = ocrName.trim().split(/\s+/)[0];
     if (firstWord && firstWord.length > 3 && firstWord !== ocrName.trim()) {
       const firstWordSearch = await scryfallSearchFetch(
-        `${BASE_URL}/cards/search?q=name:${encodeURIComponent(firstWord)}+lang:${scryfallLang}&unique=prints&order=released`
+        `${BASE_URL}/cards/search?q=${encodeURIComponent(firstWord)}+lang:${scryfallLang}&unique=prints&order=released`
       );
       if (firstWordSearch) return normalizeScryfallCard(firstWordSearch, language);
     }

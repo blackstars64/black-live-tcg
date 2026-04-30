@@ -1,6 +1,4 @@
 // ─── Fallback prix — APIs officielles des jeux ────────────────────
-// Utilisé quand le scraping Cardmarket échoue ou est bloqué.
-// Best effort : retourne null sans lever d'erreur si la requête échoue.
 import type { CardLanguage, GameType } from '../../types/card';
 
 export interface FallbackPrice {
@@ -12,7 +10,6 @@ export interface FallbackPrice {
 
 const FETCH_TIMEOUT_MS = 8000;
 
-// Mapping langue → code Scryfall
 const LANG_TO_SCRYFALL: Partial<Record<CardLanguage, string>> = {
   en: 'en', fr: 'fr', de: 'de', es: 'es', it: 'it',
   ja: 'ja', pt: 'pt', ru: 'ru', ko: 'ko', zh: 'zhs',
@@ -27,8 +24,8 @@ function fetchWithTimeout(url: string, options?: RequestInit): Promise<Response>
 }
 
 // ─── MTG → Scryfall ───────────────────────────────────────────────
-// Stratégie : cherche d'abord par nom dans la langue de la carte,
-// puis par premier mot si OCR partiel, puis EN fuzzy en dernier recours.
+// Les cartes non-EN ont prices: null sur Scryfall.
+// Stratégie : trouver la carte (FR ou EN), extraire les prix depuis la version EN.
 async function fetchScryfallPrice(
   name: string,
   language: CardLanguage
@@ -37,51 +34,90 @@ async function fetchScryfallPrice(
     const encoded = encodeURIComponent(name);
     const scryfallLang = LANG_TO_SCRYFALL[language];
 
-    type ScryfallCard = { prices?: { eur?: string | null; usd?: string | null } };
-    type ScryfallList = { object: string; data?: ScryfallCard[] };
+    type ScryfallRaw = {
+      object?: string;
+      prices?: { eur?: string | null; usd?: string | null };
+      name?: string;   // nom EN toujours présent
+      oracle_id?: string;
+      data?: ScryfallRaw[];
+    };
 
-    async function fetchCard(url: string): Promise<ScryfallCard | null> {
+    async function fetchCard(url: string): Promise<ScryfallRaw | null> {
       const res = await fetchWithTimeout(url);
       if (!res.ok) return null;
-      const json = await res.json() as ScryfallCard & ScryfallList;
+      const json = await res.json() as ScryfallRaw;
       if (json.object === 'list') return json.data?.[0] ?? null;
+      if (json.object === 'error') return null;
       return json;
     }
 
-    let card: ScryfallCard | null = null;
+    function extractPrice(card: ScryfallRaw): number | null {
+      const eur = card.prices?.eur ? parseFloat(card.prices.eur) : null;
+      const usd = card.prices?.usd ? parseFloat(card.prices.usd) : null;
+      return eur ?? (usd != null ? Math.round(usd * 0.92 * 100) / 100 : null);
+    }
 
-    // Étape 1 : nom dans la langue détectée (ex: nom français)
+    // Étape 1 : trouver la carte dans la langue détectée (plein-texte FR)
+    // → Scryfall indexe les noms imprimés FR : "culture" trouve "Rotation des cultures"
     if (scryfallLang && language !== 'en') {
-      card = await fetchCard(
-        `https://api.scryfall.com/cards/search?q=name:${encoded}+lang:${scryfallLang}&unique=prints&order=released`
+      const frCard = await fetchCard(
+        `https://api.scryfall.com/cards/search?q=${encoded}+lang:${scryfallLang}&unique=prints&order=released`
       );
-      // Étape 1b : premier mot seulement (tolère erreurs OCR sur la suite du nom)
-      if (!card) {
-        const firstWord = name.trim().split(/\s+/)[0];
-        if (firstWord.length > 3 && firstWord !== name.trim()) {
-          card = await fetchCard(
-            `https://api.scryfall.com/cards/search?q=name:${encodeURIComponent(firstWord)}+lang:${scryfallLang}&unique=prints&order=released`
+
+      if (frCard) {
+        // Essayer les prix sur la version FR d'abord
+        const frPrice = extractPrice(frCard);
+        if (frPrice != null) {
+          return { priceNmLow: frPrice, priceTrend: null, source: 'scryfall', currency: 'EUR' };
+        }
+
+        // Prix null sur la version FR → récupérer la version EN via le nom anglais
+        // Le champ `name` Scryfall est TOUJOURS le nom anglais, même pour les versions FR
+        const enName = frCard.name;
+        if (enName) {
+          const enCard = await fetchCard(
+            `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(enName)}`
           );
+          const enPrice = enCard ? extractPrice(enCard) : null;
+          if (enPrice != null) {
+            return { priceNmLow: enPrice, priceTrend: null, source: 'scryfall', currency: 'EUR' };
+          }
+        }
+      }
+
+      // Étape 1b : premier mot seulement (tolère erreurs OCR)
+      const firstWord = name.trim().split(/\s+/)[0];
+      if (firstWord.length > 3 && firstWord !== name.trim()) {
+        const firstWordCard = await fetchCard(
+          `https://api.scryfall.com/cards/search?q=${encodeURIComponent(firstWord)}+lang:${scryfallLang}&unique=prints&order=released`
+        );
+        if (firstWordCard) {
+          const enName = firstWordCard.name;
+          if (enName) {
+            const enCard = await fetchCard(
+              `https://api.scryfall.com/cards/named?exact=${encodeURIComponent(enName)}`
+            );
+            const enPrice = enCard ? extractPrice(enCard) : null;
+            if (enPrice != null) {
+              return { priceNmLow: enPrice, priceTrend: null, source: 'scryfall', currency: 'EUR' };
+            }
+          }
         }
       }
     }
 
-    // Étape 2 : nom anglais fuzzy (fallback universel)
-    if (!card) {
-      card = await fetchCard(
-        `https://api.scryfall.com/cards/named?fuzzy=${encoded}`
-      );
+    // Étape 2 : recherche EN fuzzy (nom anglais direct)
+    const enCard = await fetchCard(
+      `https://api.scryfall.com/cards/named?fuzzy=${encoded}`
+    );
+    if (enCard) {
+      const price = extractPrice(enCard);
+      if (price != null) {
+        return { priceNmLow: price, priceTrend: null, source: 'scryfall', currency: 'EUR' };
+      }
     }
 
-    if (!card?.prices) return null;
-
-    const eurPrice = card.prices.eur ? parseFloat(card.prices.eur) : null;
-    const usdPrice = card.prices.usd ? parseFloat(card.prices.usd) : null;
-    const priceNmLow = eurPrice ?? (usdPrice != null ? Math.round(usdPrice * 0.92 * 100) / 100 : null);
-
-    if (priceNmLow == null) return null;
-
-    return { priceNmLow, priceTrend: null, source: 'scryfall', currency: 'EUR' };
+    return null;
   } catch {
     return null;
   }
