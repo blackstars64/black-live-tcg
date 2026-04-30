@@ -104,11 +104,66 @@ export function useCardScanner() {
     [recognizeFromUri, setScanning, setResult, setError]
   );
 
+  // Recherche directe par nom saisi manuellement (bypass OCR)
+  const scanByName = useCallback(
+    async (name: string, game: GameType): Promise<void> => {
+      setScanning(true);
+      try {
+        const identification = await identifyCardCached(name, game, 'en');
+        const card = identification?.card ?? {
+          id: `manual-${Date.now()}`,
+          name,
+          nameEn: name,
+          game,
+          set: '',
+          setCode: '',
+          number: '',
+          language: 'en' as const,
+          imageUrl: null,
+          oracleId: null,
+          cardmarketId: null,
+        };
+
+        const priceResult = await getCardPrice(
+          card.id,
+          card.nameEn,
+          card.game,
+          card.language,
+          card.set,
+          card.number
+        );
+
+        setResult({
+          card,
+          price: priceResult
+            ? {
+                cardId: card.id,
+                language: priceResult.language,
+                condition: priceResult.condition,
+                priceNmLow: priceResult.priceNmLow,
+                currency: priceResult.currency,
+                fetchedAt: priceResult.fetchedAt,
+                cardmarketUrl: priceResult.productUrl,
+              }
+            : null,
+          confidence: identification ? identification.confidence : 0.5,
+          scannedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Erreur inconnue');
+      } finally {
+        setScanning(false);
+      }
+    },
+    [setScanning, setResult, setError]
+  );
+
   return {
     isScanning: isScanning || isOcrProcessing,
     currentResult,
     error: error ?? ocrError,
     scanCard,
+    scanByName,
     reset,
   };
 }

@@ -1,20 +1,23 @@
-// ─── Écran Scanner — P1 ──────────────────────────────────────────
-// Caméra expo-camera + sélecteur jeu + pipeline OCR via useCardScanner
+// ─── Écran Scanner ────────────────────────────────────────────────
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Keyboard,
+  KeyboardAvoidingView,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useRouter } from 'expo-router';
 
-// ─── Composants ───────────────────────────────────────────────────
 import { ScanButton } from '../../components/scanner/ScanButton';
 import { ScanOverlay } from '../../components/scanner/ScanOverlay';
 import { LoadingSpinner } from '../../components/ui/LoadingSpinner';
-
-// ─── Store / hooks ────────────────────────────────────────────────
 import { useCardScanner } from '../../hooks/useCardScanner';
 import { useHistoryStore } from '../../store';
-
-// ─── Constantes ───────────────────────────────────────────────────
 import { Colors } from '../../constants/colors';
 import type { GameType } from '../../types/card';
 
@@ -29,16 +32,19 @@ export default function ScanScreen() {
   const cameraRef = useRef<CameraView>(null);
   const [selectedGame, setSelectedGame] = useState<GameType>('mtg');
   const [permission, requestPermission] = useCameraPermissions();
+  const [manualName, setManualName] = useState('');
+  const [showManual, setShowManual] = useState(false);
 
-  const { isScanning, currentResult, error, scanCard, reset } = useCardScanner();
+  const { isScanning, currentResult, error, scanCard, scanByName, reset } = useCardScanner();
   const { addScan } = useHistoryStore();
 
-  // Navigation automatique vers le résultat quand un scan réussit
   useEffect(() => {
     if (currentResult) {
       addScan(currentResult);
       router.push(`/result/${currentResult.card.id}`);
       reset();
+      setManualName('');
+      setShowManual(false);
     }
   }, [currentResult]);
 
@@ -46,7 +52,7 @@ export default function ScanScreen() {
     if (!cameraRef.current || isScanning) return;
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 0.85,
+        quality: 0.9,
         base64: false,
         skipProcessing: false,
       });
@@ -56,16 +62,14 @@ export default function ScanScreen() {
     }
   }
 
-  // ─── Permission non encore déterminée ────────────────────────────
-  if (!permission) {
-    return (
-      <View style={styles.container}>
-        <LoadingSpinner />
-      </View>
-    );
+  async function handleManualSearch(): Promise<void> {
+    if (!manualName.trim() || isScanning) return;
+    Keyboard.dismiss();
+    await scanByName(manualName.trim(), selectedGame);
   }
 
-  // ─── Permission refusée ───────────────────────────────────────────
+  if (!permission) return <View style={styles.container}><LoadingSpinner /></View>;
+
   if (!permission.granted) {
     return (
       <View style={styles.permissionContainer}>
@@ -80,16 +84,14 @@ export default function ScanScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardAvoidingView
+      style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+    >
       {/* Caméra plein écran */}
-      <CameraView
-        ref={cameraRef}
-        style={StyleSheet.absoluteFill}
-        facing="back"
-        ratio="4:3"
-      />
+      <CameraView ref={cameraRef} style={StyleSheet.absoluteFill} facing="back" ratio="4:3" />
 
-      {/* Overlay cadre de scan */}
+      {/* Overlay cadre */}
       <View style={StyleSheet.absoluteFill} pointerEvents="none">
         <ScanOverlay active={isScanning} />
       </View>
@@ -102,24 +104,50 @@ export default function ScanScreen() {
             style={[styles.gamePill, selectedGame === game.id && styles.gamePillActive]}
             onPress={() => setSelectedGame(game.id)}
           >
-            <Text
-              style={[
-                styles.gamePillText,
-                selectedGame === game.id && styles.gamePillTextActive,
-              ]}
-            >
+            <Text style={[styles.gamePillText, selectedGame === game.id && styles.gamePillTextActive]}>
               {game.label}
             </Text>
           </Pressable>
         ))}
       </View>
 
-      {/* Bouton scan */}
-      <View style={styles.scanButtonContainer}>
-        <ScanButton onPress={handleScan} disabled={isScanning} />
+      {/* Bas de l'écran : bouton scan + recherche manuelle */}
+      <View style={styles.bottomContainer}>
+        {/* Recherche manuelle (toggle) */}
+        {showManual ? (
+          <View style={styles.manualContainer}>
+            <TextInput
+              style={styles.manualInput}
+              value={manualName}
+              onChangeText={setManualName}
+              placeholder="Nom de la carte..."
+              placeholderTextColor={Colors.textMuted}
+              autoFocus
+              returnKeyType="search"
+              onSubmitEditing={handleManualSearch}
+            />
+            <Pressable
+              style={[styles.manualSearchBtn, !manualName.trim() && styles.manualSearchBtnDisabled]}
+              onPress={handleManualSearch}
+              disabled={!manualName.trim() || isScanning}
+            >
+              <Text style={styles.manualSearchBtnText}>Rechercher</Text>
+            </Pressable>
+            <Pressable onPress={() => { setShowManual(false); setManualName(''); reset(); }}>
+              <Text style={styles.manualCancelText}>Annuler</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <View style={styles.scanRow}>
+            <ScanButton onPress={handleScan} disabled={isScanning} />
+            <Pressable style={styles.manualToggle} onPress={() => { reset(); setShowManual(true); }}>
+              <Text style={styles.manualToggleText}>✏️ Saisie manuelle</Text>
+            </Pressable>
+          </View>
+        )}
       </View>
 
-      {/* Overlay de traitement */}
+      {/* Spinner traitement */}
       {isScanning && (
         <View style={styles.scanningOverlay}>
           <LoadingSpinner />
@@ -127,22 +155,19 @@ export default function ScanScreen() {
         </View>
       )}
 
-      {/* Banner d'erreur (dismiss au tap) */}
-      {error && (
-        <Pressable style={styles.errorBanner} onPress={reset}>
-          <Text style={styles.errorText}>{error}</Text>
+      {/* Banner erreur */}
+      {error && !showManual && (
+        <Pressable style={styles.errorBanner} onPress={() => { reset(); setShowManual(true); }}>
+          <Text style={styles.errorText}>{error} — Tap pour saisir manuellement</Text>
           <Text style={styles.errorDismiss}>✕</Text>
         </Pressable>
       )}
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
+  container: { flex: 1, backgroundColor: Colors.background },
   gameSelector: {
     position: 'absolute',
     top: 60,
@@ -162,26 +187,65 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     backgroundColor: Colors.surface,
   },
-  gamePillActive: {
-    backgroundColor: Colors.primary,
-    borderColor: Colors.primary,
-  },
-  gamePillText: {
-    color: Colors.textSecondary,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  gamePillTextActive: {
-    color: '#000',
-  },
-  scanButtonContainer: {
+  gamePillActive: { backgroundColor: Colors.primary, borderColor: Colors.primary },
+  gamePillText: { color: Colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  gamePillTextActive: { color: '#000' },
+  bottomContainer: {
     position: 'absolute',
-    bottom: 48,
+    bottom: 0,
     left: 0,
     right: 0,
-    alignItems: 'center',
     zIndex: 10,
+    paddingBottom: 36,
+    alignItems: 'center',
   },
+  scanRow: {
+    alignItems: 'center',
+    gap: 16,
+  },
+  manualToggle: {
+    backgroundColor: Colors.surface,
+    borderRadius: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  manualToggleText: { color: Colors.textSecondary, fontSize: 13 },
+  manualContainer: {
+    width: '100%',
+    paddingHorizontal: 20,
+    gap: 10,
+    backgroundColor: Colors.surface,
+    paddingTop: 16,
+    paddingBottom: 8,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    borderTopWidth: 1,
+    borderColor: Colors.border,
+    alignItems: 'center',
+  },
+  manualInput: {
+    width: '100%',
+    backgroundColor: Colors.surfaceElevated,
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    color: Colors.text,
+    fontSize: 16,
+    borderWidth: 1,
+    borderColor: Colors.border,
+  },
+  manualSearchBtn: {
+    width: '100%',
+    backgroundColor: Colors.primary,
+    borderRadius: 12,
+    paddingVertical: 13,
+    alignItems: 'center',
+  },
+  manualSearchBtnDisabled: { opacity: 0.4 },
+  manualSearchBtnText: { color: '#000', fontWeight: '700', fontSize: 16 },
+  manualCancelText: { color: Colors.textMuted, fontSize: 14, paddingVertical: 8 },
   scanningOverlay: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: Colors.overlay,
@@ -190,13 +254,10 @@ const styles = StyleSheet.create({
     gap: 16,
     zIndex: 20,
   },
-  scanningText: {
-    color: Colors.text,
-    fontSize: 16,
-  },
+  scanningText: { color: Colors.text, fontSize: 16 },
   errorBanner: {
     position: 'absolute',
-    bottom: 130,
+    bottom: 160,
     left: 16,
     right: 16,
     backgroundColor: Colors.error,
@@ -207,16 +268,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     zIndex: 20,
   },
-  errorText: {
-    color: '#fff',
-    fontSize: 14,
-    flex: 1,
-  },
-  errorDismiss: {
-    color: '#fff',
-    fontSize: 16,
-    marginLeft: 8,
-  },
+  errorText: { color: '#fff', fontSize: 13, flex: 1 },
+  errorDismiss: { color: '#fff', fontSize: 16, marginLeft: 8 },
   permissionContainer: {
     flex: 1,
     backgroundColor: Colors.background,
@@ -225,21 +278,7 @@ const styles = StyleSheet.create({
     padding: 32,
     gap: 24,
   },
-  permissionText: {
-    color: Colors.textSecondary,
-    fontSize: 16,
-    textAlign: 'center',
-    lineHeight: 24,
-  },
-  permissionButton: {
-    backgroundColor: Colors.primary,
-    borderRadius: 12,
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-  },
-  permissionButtonText: {
-    color: '#000',
-    fontSize: 16,
-    fontWeight: '700',
-  },
+  permissionText: { color: Colors.textSecondary, fontSize: 16, textAlign: 'center', lineHeight: 24 },
+  permissionButton: { backgroundColor: Colors.primary, borderRadius: 12, paddingHorizontal: 24, paddingVertical: 14 },
+  permissionButtonText: { color: '#000', fontSize: 16, fontWeight: '700' },
 });

@@ -1,22 +1,18 @@
 // ─── Hook OCR ML Kit (on-device, gratuit, offline) ───────────────
-// Wrapper autour de @react-native-ml-kit/text-recognition.
-// Retourne le texte brut + langue détectée + score de confiance approché.
 import { useState, useCallback } from 'react';
 import TextRecognition from '@react-native-ml-kit/text-recognition';
 
-// ─── Imports locaux ───────────────────────────────────────────────
 import { detectLanguage } from '../lib/ocr/extractor';
 import type { CardLanguage } from '../types/card';
 
-// ─── Types publics ────────────────────────────────────────────────
 export interface OcrResult {
-  text: string;        // Texte brut complet extrait par ML Kit
-  confidence: number;  // 0-1 — approximation depuis le nombre de blocs détectés
-  blockCount: number;  // Nombre de blocs texte retournés par ML Kit
-  language: CardLanguage; // Langue détectée par heuristique Unicode/mots-outils
+  text: string;         // Texte trié haut→bas (blocs ML Kit ordonnés par Y)
+  fullText: string;     // Texte brut complet (ordre ML Kit)
+  confidence: number;
+  blockCount: number;
+  language: CardLanguage;
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────
 export function useOcr(): {
   recognizeFromUri: (imageUri: string) => Promise<OcrResult | null>;
   isProcessing: boolean;
@@ -32,32 +28,30 @@ export function useOcr(): {
     try {
       const result = await TextRecognition.recognize(imageUri);
 
-      // Texte vide = carte non lisible (mauvais angle, reflet, etc.)
-      if (!result.text || result.text.trim().length === 0) {
-        return null;
-      }
+      if (!result.text || result.text.trim().length === 0) return null;
 
-      const blockCount = result.blocks?.length ?? 0;
+      const blocks = result.blocks ?? [];
+      const blockCount = blocks.length;
 
-      // Approximation de confiance : 5 blocs ou plus = carte bien cadrée
-      // Une carte TCG typique génère 3-8 blocs (nom, type, texte, PA/PD, numéro)
-      const confidence = blockCount >= 5
-        ? Math.min(blockCount / 8, 1)
-        : blockCount > 0
-          ? 0.5
-          : 0.2;
+      // Trier les blocs par position Y croissante (haut de la carte = petit Y)
+      // Le nom TCG est toujours dans le bloc le plus haut
+      const sortedBlocks = [...blocks].sort(
+        (a, b) => (a.frame?.y ?? 0) - (b.frame?.y ?? 0)
+      );
+      const sortedText = sortedBlocks.map((b) => b.text).join('\n');
 
+      const confidence = blockCount >= 5 ? Math.min(blockCount / 8, 1) : blockCount > 0 ? 0.5 : 0.2;
       const language = detectLanguage(result.text);
 
       return {
-        text: result.text,
+        text: sortedText,      // utilisé pour extractCardName (trié)
+        fullText: result.text, // utilisé pour detectLanguage
         confidence,
         blockCount,
         language,
       };
     } catch (err) {
-      const message = err instanceof Error ? err.message : 'Erreur ML Kit inconnue';
-      setOcrError(message);
+      setOcrError(err instanceof Error ? err.message : 'Erreur ML Kit inconnue');
       return null;
     } finally {
       setIsProcessing(false);
