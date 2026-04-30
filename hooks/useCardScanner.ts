@@ -1,7 +1,7 @@
 // ─── Hook principal scan carte ───────────────────────────────────
 import { useScanStore } from '../store';
 import { extractCardName, normalizeCardName, detectLanguage } from '../lib/ocr/extractor';
-import { fetchCardPrice } from '../lib/api/cardmarket';
+import { getCardPrice } from '../lib/price';
 import type { CardLanguage, GameType } from '../types/card';
 
 export function useCardScanner() {
@@ -18,7 +18,7 @@ export function useCardScanner() {
     try {
       // Étape 1 : extraire le nom + détecter la langue depuis l'OCR
       const rawName = extractCardName(rawOcrText);
-      const language = detectLanguage(rawOcrText);
+      const language: CardLanguage = detectLanguage(rawOcrText);
       const nameEn = normalizeCardName(rawName);
 
       if (!nameEn) {
@@ -27,7 +27,6 @@ export function useCardScanner() {
       }
 
       // Étape 2 : TODO P2 — identification via API (Scryfall / PokéAPI / YGOPro)
-      // Pour l'instant : stub card avec le nom extrait
       const card = {
         id: `pending-${Date.now()}`,
         name: rawName,
@@ -42,19 +41,29 @@ export function useCardScanner() {
         cardmarketId: null,
       };
 
-      // Étape 3 : prix NM Cardmarket (langue détectée au scan)
-      const priceResponse = await fetchCardPrice(nameEn, game, language, null);
+      // Étape 3 : prix NM — pipeline cache → scraping → fallback
+      const priceResult = await getCardPrice(card.id, nameEn, game, language);
 
       setResult({
         card,
-        price: priceResponse.data
-          ? { ...priceResponse.data, cardId: card.id }
+        price: priceResult
+          ? {
+              cardId: card.id,
+              language: priceResult.language,
+              condition: priceResult.condition,
+              priceNmLow: priceResult.priceNmLow,
+              currency: priceResult.currency,
+              fetchedAt: priceResult.fetchedAt,
+              cardmarketUrl: priceResult.productUrl,
+            }
           : null,
         confidence: 0.7, // TODO P1 : lire confidence réelle depuis ML Kit
         scannedAt: new Date().toISOString(),
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur inconnue');
+    } finally {
+      setScanning(false);
     }
   }
 
