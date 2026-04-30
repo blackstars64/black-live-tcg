@@ -7,44 +7,8 @@ import type { CardLanguage, GameType } from '../../types/card';
 import { getCachedPrice, setCachedPrice, initPriceCache } from './cache';
 import { fetchFallbackPrice } from './fallback';
 import { enqueueRequest, isCircuitOpen, recordSuccess, recordFailure } from './ratelimit';
-
-// ─── Import scraper (Session A) ───────────────────────────────────
-// Si le fichier n'existe pas encore : les fonctions retournent null silencieusement
-let scrapePriceFromSearch: (
-  nameEn: string,
-  game: GameType,
-  language: CardLanguage,
-  setName?: string,
-  cardNumber?: string
-) => Promise<ScraperResult>;
-
-let scrapePriceFromUrl: (
-  productUrl: string,
-  language: CardLanguage
-) => Promise<ScraperResult>;
-
-try {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const scraperModule = require('./scraper');
-  scrapePriceFromSearch = scraperModule.scrapePriceFromSearch;
-  scrapePriceFromUrl = scraperModule.scrapePriceFromUrl;
-} catch {
-  // Scraper pas encore disponible — fallback direct
-  const notImplemented = async (): Promise<ScraperResult> => ({
-    priceNmLow: null,
-    priceTrend: null,
-    productUrl: null,
-  });
-  scrapePriceFromSearch = notImplemented;
-  scrapePriceFromUrl = notImplemented;
-}
-
-// ─── Types ────────────────────────────────────────────────────────
-export interface ScraperResult {
-  priceNmLow: number | null;
-  priceTrend: number | null;
-  productUrl: string | null;
-}
+import { scrapePriceFromSearch, scrapePriceFromUrl } from './scraper';
+import type { ScraperResult } from './scraper';
 
 export interface PriceResult {
   priceNmLow: number | null;
