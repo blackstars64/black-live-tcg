@@ -53,14 +53,14 @@ async function fetchScryfallPrice(
     // Étape 1 : nom dans la langue détectée (ex: nom français)
     if (scryfallLang && language !== 'en') {
       card = await fetchCard(
-        `https://api.scryfall.com/cards/search?q="${encoded}"+lang:${scryfallLang}&unique=prints&order=released`
+        `https://api.scryfall.com/cards/search?q=name:${encoded}+lang:${scryfallLang}&unique=prints&order=released`
       );
       // Étape 1b : premier mot seulement (tolère erreurs OCR sur la suite du nom)
       if (!card) {
         const firstWord = name.trim().split(/\s+/)[0];
         if (firstWord.length > 3 && firstWord !== name.trim()) {
           card = await fetchCard(
-            `https://api.scryfall.com/cards/search?q="${encodeURIComponent(firstWord)}"+lang:${scryfallLang}&unique=prints&order=released`
+            `https://api.scryfall.com/cards/search?q=name:${encodeURIComponent(firstWord)}+lang:${scryfallLang}&unique=prints&order=released`
           );
         }
       }

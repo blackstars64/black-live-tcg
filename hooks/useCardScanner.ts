@@ -109,7 +109,10 @@ export function useCardScanner() {
     async (name: string, game: GameType): Promise<void> => {
       setScanning(true);
       try {
-        const identification = await identifyCardCached(name, game, 'en');
+        // Essayer FR d'abord (noms imprimés), puis EN en fallback
+      const identification =
+        (await identifyCardCached(name, game, 'fr')) ??
+        (await identifyCardCached(name, game, 'en'));
         const card = identification?.card ?? {
           id: `manual-${Date.now()}`,
           name,
