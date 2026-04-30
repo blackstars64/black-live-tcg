@@ -34,8 +34,6 @@ export async function getCardPrice(
   cardNumber?: string,
   cachedProductUrl?: string | null
 ): Promise<PriceResult | null> {
-  console.warn(`[prix] nameEn="${nameEn}" game=${game} lang=${language}`);
-
   // Étape 1 : cache local (TTL 6h Cardmarket, 24h fallback)
   const cached = await getCachedPrice(cardId, language);
   if (cached) {
@@ -84,16 +82,11 @@ export async function getCardPrice(
       }
     } catch (e) {
       recordFailure();
-      console.warn('[prix] scraping échoué:', e instanceof Error ? e.message : e);
     }
-  } else {
-    console.warn('[prix] circuit ouvert — scraping skippé');
   }
 
   // Étape 3 : fallback API officielle (Scryfall / PokéAPI / YGOPro)
-  console.warn('[prix] fallback API...');
   const fallback = await fetchFallbackPrice(nameEn, game, language);
-  console.warn('[prix] fallback résultat:', JSON.stringify(fallback));
   if (fallback) {
     await setCachedPrice({
       cardId,
