@@ -3,7 +3,6 @@
 // Best effort : retourne null sans lever d'erreur si la requête échoue.
 import type { CardLanguage, GameType } from '../../types/card';
 
-// ─── Types ────────────────────────────────────────────────────────
 export interface FallbackPrice {
   priceNmLow: number | null;
   priceTrend: number | null;
@@ -12,6 +11,12 @@ export interface FallbackPrice {
 }
 
 const FETCH_TIMEOUT_MS = 8000;
+
+// Mapping langue → code Scryfall
+const LANG_TO_SCRYFALL: Partial<Record<CardLanguage, string>> = {
+  en: 'en', fr: 'fr', de: 'de', es: 'es', it: 'it',
+  ja: 'ja', pt: 'pt', ru: 'ru', ko: 'ko', zh: 'zhs',
+};
 
 function fetchWithTimeout(url: string, options?: RequestInit): Promise<Response> {
   const controller = new AbortController();
@@ -22,25 +27,61 @@ function fetchWithTimeout(url: string, options?: RequestInit): Promise<Response>
 }
 
 // ─── MTG → Scryfall ───────────────────────────────────────────────
-async function fetchScryfallPrice(nameEn: string): Promise<FallbackPrice | null> {
+// Stratégie : cherche d'abord par nom dans la langue de la carte,
+// puis par premier mot si OCR partiel, puis EN fuzzy en dernier recours.
+async function fetchScryfallPrice(
+  name: string,
+  language: CardLanguage
+): Promise<FallbackPrice | null> {
   try {
-    const url = `https://api.scryfall.com/cards/named?fuzzy=${encodeURIComponent(nameEn)}`;
-    const response = await fetchWithTimeout(url);
-    if (!response.ok) return null;
+    const encoded = encodeURIComponent(name);
+    const scryfallLang = LANG_TO_SCRYFALL[language];
 
-    const data = await response.json() as {
-      prices?: { eur?: string | null; usd?: string | null };
-    };
+    type ScryfallCard = { prices?: { eur?: string | null; usd?: string | null } };
+    type ScryfallList = { object: string; data?: ScryfallCard[] };
 
-    const eurPrice = data.prices?.eur ? parseFloat(data.prices.eur) : null;
-    const usdPrice = data.prices?.usd ? parseFloat(data.prices.usd) : null;
+    async function fetchCard(url: string): Promise<ScryfallCard | null> {
+      const res = await fetchWithTimeout(url);
+      if (!res.ok) return null;
+      const json = await res.json() as ScryfallCard & ScryfallList;
+      if (json.object === 'list') return json.data?.[0] ?? null;
+      return json;
+    }
 
-    return {
-      priceNmLow: eurPrice ?? (usdPrice !== null ? usdPrice * 0.92 : null), // Conversion USD→EUR approximative
-      priceTrend: null,
-      source: 'scryfall',
-      currency: 'EUR',
-    };
+    let card: ScryfallCard | null = null;
+
+    // Étape 1 : nom dans la langue détectée (ex: nom français)
+    if (scryfallLang && language !== 'en') {
+      card = await fetchCard(
+        `https://api.scryfall.com/cards/search?q="${encoded}"+lang:${scryfallLang}&unique=prints&order=released`
+      );
+      // Étape 1b : premier mot seulement (tolère erreurs OCR sur la suite du nom)
+      if (!card) {
+        const firstWord = name.trim().split(/\s+/)[0];
+        if (firstWord.length > 3 && firstWord !== name.trim()) {
+          card = await fetchCard(
+            `https://api.scryfall.com/cards/search?q="${encodeURIComponent(firstWord)}"+lang:${scryfallLang}&unique=prints&order=released`
+          );
+        }
+      }
+    }
+
+    // Étape 2 : nom anglais fuzzy (fallback universel)
+    if (!card) {
+      card = await fetchCard(
+        `https://api.scryfall.com/cards/named?fuzzy=${encoded}`
+      );
+    }
+
+    if (!card?.prices) return null;
+
+    const eurPrice = card.prices.eur ? parseFloat(card.prices.eur) : null;
+    const usdPrice = card.prices.usd ? parseFloat(card.prices.usd) : null;
+    const priceNmLow = eurPrice ?? (usdPrice != null ? Math.round(usdPrice * 0.92 * 100) / 100 : null);
+
+    if (priceNmLow == null) return null;
+
+    return { priceNmLow, priceTrend: null, source: 'scryfall', currency: 'EUR' };
   } catch {
     return null;
   }
@@ -69,16 +110,11 @@ async function fetchPokemonPrice(nameEn: string): Promise<FallbackPrice | null> 
 
     const card = data.data?.[0];
     const prices = card?.tcgplayer?.prices;
-    const low =
-      prices?.normal?.low ??
-      prices?.holoRare?.low ??
-      prices?.reverseHolofoil?.low ??
-      null;
-
-    if (low === null) return null;
+    const low = prices?.normal?.low ?? prices?.holoRare?.low ?? prices?.reverseHolofoil?.low ?? null;
+    if (low == null) return null;
 
     return {
-      priceNmLow: Math.round(low * 0.92 * 100) / 100, // USD → EUR
+      priceNmLow: Math.round(low * 0.92 * 100) / 100,
       priceTrend: null,
       source: 'pokemon-tcg',
       currency: 'EUR',
@@ -96,22 +132,14 @@ async function fetchYgoPrice(nameEn: string): Promise<FallbackPrice | null> {
     if (!response.ok) return null;
 
     const data = await response.json() as {
-      data?: Array<{
-        card_prices?: Array<{ cardmarket_price?: string }>;
-      }>;
+      data?: Array<{ card_prices?: Array<{ cardmarket_price?: string }> }>;
     };
 
     const priceStr = data.data?.[0]?.card_prices?.[0]?.cardmarket_price;
     const price = priceStr ? parseFloat(priceStr) : null;
+    if (price == null || isNaN(price)) return null;
 
-    if (price === null || isNaN(price)) return null;
-
-    return {
-      priceNmLow: price,
-      priceTrend: null,
-      source: 'ygoprodeck',
-      currency: 'EUR',
-    };
+    return { priceNmLow: price, priceTrend: null, source: 'ygoprodeck', currency: 'EUR' };
   } catch {
     return null;
   }
@@ -121,11 +149,11 @@ async function fetchYgoPrice(nameEn: string): Promise<FallbackPrice | null> {
 export async function fetchFallbackPrice(
   nameEn: string,
   game: GameType,
-  _language: CardLanguage // ignoré pour les fallback (APIs sans filtre langue)
+  language: CardLanguage
 ): Promise<FallbackPrice | null> {
   switch (game) {
     case 'mtg':
-      return fetchScryfallPrice(nameEn);
+      return fetchScryfallPrice(nameEn, language);
     case 'pokemon':
       return fetchPokemonPrice(nameEn);
     case 'yugioh':

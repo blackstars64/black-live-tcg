@@ -141,21 +141,31 @@ export async function identifyMtgCard(
   const encodedName = encodeURIComponent(ocrName);
   const scryfallLang = LANG_TO_SCRYFALL[language];
 
-  // Étape 1 : recherche dans la langue détectée (si non-EN et mappée)
+  // Étape 1 : recherche par NOM IMPRIMÉ dans la langue détectée
+  // cards/search?q="name" lang:fr  → cherche dans les noms français
   if (scryfallLang && language !== 'en') {
-    const result = await scryfallFetch(
-      `${BASE_URL}/cards/named?fuzzy=${encodedName}&lang=${scryfallLang}`
+    const langSearch = await scryfallSearchFetch(
+      `${BASE_URL}/cards/search?q="${encodedName}"+lang:${scryfallLang}&unique=prints&order=name`
     );
-    if (result) return normalizeScryfallCard(result, language);
+    if (langSearch) return normalizeScryfallCard(langSearch, language);
+
+    // Étape 1b : premier mot seulement (tolère les erreurs OCR sur la suite)
+    const firstWord = ocrName.trim().split(/\s+/)[0];
+    if (firstWord && firstWord.length > 3 && firstWord !== ocrName.trim()) {
+      const firstWordSearch = await scryfallSearchFetch(
+        `${BASE_URL}/cards/search?q="${encodeURIComponent(firstWord)}"+lang:${scryfallLang}&unique=prints&order=name`
+      );
+      if (firstWordSearch) return normalizeScryfallCard(firstWordSearch, language);
+    }
   }
 
-  // Étape 2 : recherche EN fuzzy
+  // Étape 2 : recherche EN fuzzy (nom anglais)
   const resultEn = await scryfallFetch(
     `${BASE_URL}/cards/named?fuzzy=${encodedName}`
   );
   if (resultEn) return normalizeScryfallCard(resultEn, language);
 
-  // Étape 3 : fulltext search (fallback)
+  // Étape 3 : fulltext EN search (dernier recours)
   const resultSearch = await scryfallSearchFetch(
     `${BASE_URL}/cards/search?q=${encodedName}&unique=cards&order=name`
   );
