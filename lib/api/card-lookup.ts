@@ -75,6 +75,6 @@ export async function identifyCardCached(
   if (sessionCache.has(key)) return sessionCache.get(key) ?? null;
 
   const result = await identifyCard(ocrName, game, language);
-  sessionCache.set(key, result);
+  if (result !== null) sessionCache.set(key, result); // ne cacher que les succès
   return result;
 }

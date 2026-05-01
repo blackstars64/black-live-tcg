@@ -7,7 +7,7 @@ import type { Card, CardLanguage } from '../../types/card';
 
 // ─── Constantes ──────────────────────────────────────────────────
 const BASE_URL = 'https://db.ygoprodeck.com/api/v7';
-const TIMEOUT_MS = 8_000;
+const TIMEOUT_MS = 5_000;
 
 // ─── Types réponse YGOPRODeck ─────────────────────────────────────
 interface YgoCardRaw {
@@ -72,25 +72,11 @@ async function ygoFetch(endpoint: string): Promise<YgoCardRaw | null> {
 }
 
 // ─── Résolution FR→EN (6g) ────────────────────────────────────────
-// Cherche par nom FR via language=fr → extrait l'id → refetch sans language pour le nom EN
+// fname (fuzzy) + language=fr → id → refetch sans language pour le nom EN (2 appels max)
 async function resolveYgoFrToEn(nameFr: string): Promise<YgoCardRaw | null> {
-  const encoded = encodeURIComponent(nameFr);
-
-  // Piste 1 : nom exact FR
-  const frExact = await ygoFetch(`cardinfo.php?name=${encoded}&language=fr`);
-  if (frExact) {
-    const enCard = await ygoFetch(`cardinfo.php?id=${frExact.id}`);
-    if (enCard) return enCard;
-  }
-
-  // Piste 1b : recherche partielle FR
-  const frFuzzy = await ygoFetch(`cardinfo.php?fname=${encoded}&language=fr`);
-  if (frFuzzy) {
-    const enCard = await ygoFetch(`cardinfo.php?id=${frFuzzy.id}`);
-    if (enCard) return enCard;
-  }
-
-  return null;
+  const frResult = await ygoFetch(`cardinfo.php?fname=${encodeURIComponent(nameFr)}&language=fr`);
+  if (!frResult) return null;
+  return ygoFetch(`cardinfo.php?id=${frResult.id}`);
 }
 
 // ─── Toutes les impressions d'une carte (6c) ──────────────────────
@@ -123,8 +109,7 @@ export async function getYgoPrintings(cardId: string): Promise<Card[]> {
  * Stratégie :
  *   1. Recherche exacte par nom EN
  *   2. Recherche partielle (fname = fuzzy)
- *   3. Ordre des mots inversé — "Inclusion Christon" FR → "Christon Inclusion" EN (6a)
- *   4. Résolution FR→EN via language=fr + refetch par ID (6g)
+ *   3. Résolution langue→EN via fname+language param → refetch par ID (6g)
  */
 export async function identifyYgoCard(
   ocrName: string,
@@ -132,28 +117,15 @@ export async function identifyYgoCard(
 ): Promise<Card | null> {
   const encodedName = encodeURIComponent(ocrName);
 
-  // Étape 1 : recherche exacte par nom
+  // Étape 1 : recherche exacte par nom EN
   const exactResult = await ygoFetch(`cardinfo.php?name=${encodedName}`);
   if (exactResult) return normalizeYgoCard(exactResult, language);
 
-  // Étape 2 : recherche partielle (fname = fuzzy name)
+  // Étape 2 : recherche partielle EN (fname = fuzzy)
   const fuzzyResult = await ygoFetch(`cardinfo.php?fname=${encodedName}`);
   if (fuzzyResult) return normalizeYgoCard(fuzzyResult, language);
 
-  // Étape 3 : ordre des mots inversé (6a)
-  const words = ocrName.trim().split(/\s+/);
-  if (words.length > 1) {
-    const reversed = words.slice().reverse().join(' ');
-    const reversedEncoded = encodeURIComponent(reversed);
-
-    const reversedExact = await ygoFetch(`cardinfo.php?name=${reversedEncoded}`);
-    if (reversedExact) return normalizeYgoCard(reversedExact, language);
-
-    const reversedFuzzy = await ygoFetch(`cardinfo.php?fname=${reversedEncoded}`);
-    if (reversedFuzzy) return normalizeYgoCard(reversedFuzzy, language);
-  }
-
-  // Étape 4 : résolution FR→EN via API language=fr (6g)
+  // Étape 3 : résolution langue→EN via API language param (6g)
   if (language === 'fr' || language === 'de' || language === 'es' || language === 'it') {
     const enCard = await resolveYgoFrToEn(ocrName);
     if (enCard) return normalizeYgoCard(enCard, language);

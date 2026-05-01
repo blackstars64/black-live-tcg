@@ -29,6 +29,9 @@ const RULES_START = /^(si|quand|chaque|lorsqu|tant que|lors|pendant|vous|votre|a
 // Mots qui indiquent du texte parasite (impression, copyright, etc.)
 const JUNK_PATTERN = /(\d{4}|™|©|wizards|pokemon|konami|illustrated|artist)/i;
 
+// Labels de type TCG — jamais un nom de carte (Pokémon, YGO, MTG — FR+EN+DE+ES+IT+JP)
+const TYPE_LABEL = /^(dresseur|supporter|objet|stade|énergie|energie|trainer|item|stadium|energy|poké-ball|pokeball|monstre|magie|piège|piege|contre-piège|contre-piege|creature|créature|enchantement|enchantment|éphémère|ephemere|ephémère|rituel|sorcery|instant|terrain|land|artefact|artifact|planeswalker|normale?|effekt?|spell|trap|monster|magic|field|continuous|quick-play|schnell-zauber|zauber|falle|maschinen-k|krieger)$/i;
+
 function scoreLine(line: string): number {
   const words = line.trim().split(/\s+/);
   const wordCount = words.length;
@@ -56,6 +59,9 @@ function scoreLine(line: string): number {
 
   // Texte parasite (copyright, artiste, etc.) → exclusion
   if (JUNK_PATTERN.test(line)) score -= 10;
+
+  // Label de type TCG (Dresseur, Trainer, Monstre, Sorcery…) → exclusion forte
+  if (TYPE_LABEL.test(line.trim())) score -= 12;
 
   return score;
 }
