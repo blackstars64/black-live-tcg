@@ -44,16 +44,17 @@ export const CARDMARKET_CONDITION_NM = 2;
 
 export interface Card {
   id: string;
-  name: string;         // Nom dans la langue scannée
-  nameEn: string;       // Nom anglais normalisé (référence universelle)
+  name: string;         // Nom dans la langue scannée (FR/JP/EN selon la carte)
+  nameEn: string;       // Nom anglais normalisé (référence universelle pour les APIs)
   game: GameType;
   set: string;          // Nom de l'édition
   setCode: string;      // Code court de l'édition (ex: "M21", "SWSH1")
   number: string;       // Numéro de carte dans l'édition
+  rarity: string | null; // Rareté (Common, Rare, Ultra Rare, Secret Rare…)
   language: CardLanguage;
   imageUrl: string | null;
   oracleId: string | null;
-  cardmarketId: number | null; // idProduct Cardmarket (mis en cache après 1er fetch)
+  cardmarketId: number | null;
 }
 
 export interface CardPrice {

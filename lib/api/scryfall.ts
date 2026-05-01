@@ -45,6 +45,7 @@ interface ScryfallCardRaw {
   set: string;
   set_name: string;
   collector_number: string;
+  rarity: string; // 'common' | 'uncommon' | 'rare' | 'mythic'
   lang: string;
   object: string;
   image_uris?: { normal: string; small: string; large: string };
@@ -74,6 +75,9 @@ function normalizeScryfallCard(
     raw.card_faces?.[0]?.image_uris?.normal ??
     null;
 
+  const RARITY_LABEL: Record<string, string> = {
+    common: 'Common', uncommon: 'Uncommon', rare: 'Rare', mythic: 'Mythic Rare',
+  };
   return {
     id: raw.id,
     name: raw.printed_name ?? raw.name,
@@ -82,6 +86,7 @@ function normalizeScryfallCard(
     set: raw.set_name,
     setCode: raw.set.toUpperCase(),
     number: raw.collector_number,
+    rarity: RARITY_LABEL[raw.rarity] ?? raw.rarity ?? null,
     language: detectedLanguage,
     imageUrl,
     oracleId: raw.oracle_id,

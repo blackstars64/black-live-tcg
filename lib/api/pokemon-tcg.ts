@@ -34,6 +34,7 @@ interface PokemonCardRaw {
   name: string;
   set: { id: string; name: string; series: string };
   number: string;
+  rarity?: string; // ex: "Common", "Rare Holo", "Ultra Rare", "Special Illustration Rare"
   images: { small: string; large: string };
 }
 
@@ -52,6 +53,7 @@ function normalizePokemonCard(raw: PokemonCardRaw, language: CardLanguage): Card
     set: raw.set.name,
     setCode: raw.set.id.toUpperCase(),
     number: raw.number,
+    rarity: raw.rarity ?? null,
     language,
     imageUrl: raw.images.large,
     oracleId: null,

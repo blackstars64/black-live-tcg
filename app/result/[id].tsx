@@ -57,6 +57,18 @@ export default function ResultScreen() {
     setSelectedCard(result.card);
     setCurrentPrice(result.price);
     loadPrintings(result.card);
+    // Debug MTG : log les données de la carte pour diagnostiquer les images manquantes
+    if (result.card.game === 'mtg') {
+      console.log('[result] MTG card:', JSON.stringify({
+        name: result.card.name,
+        nameEn: result.card.nameEn,
+        set: result.card.set,
+        setCode: result.card.setCode,
+        number: result.card.number,
+        imageUrl: result.card.imageUrl,
+        oracleId: result.card.oracleId,
+      }));
+    }
   }, [result?.card.id]);
 
   async function loadPrintings(card: Card): Promise<void> {
@@ -201,9 +213,16 @@ export default function ResultScreen() {
                     style={[styles.editionItem, isActive && styles.editionItemActive]}
                     onPress={() => handleEditionChange(printing)}
                   >
-                    <Text style={[styles.editionItemText, isActive && styles.editionItemTextActive]}>
-                      {printing.set}
-                    </Text>
+                    <View style={styles.editionItemLeft}>
+                      <Text style={[styles.editionItemText, isActive && styles.editionItemTextActive]}>
+                        {printing.set}
+                      </Text>
+                      {printing.rarity ? (
+                        <Text style={[styles.editionItemRarity, isActive && styles.editionItemRarityActive]}>
+                          {printing.rarity}
+                        </Text>
+                      ) : null}
+                    </View>
                     <Text style={[styles.editionItemCode, isActive && styles.editionItemCodeActive]}>
                       {[printing.setCode, printing.number].filter(Boolean).join(' · ')}
                     </Text>
@@ -375,14 +394,25 @@ const styles = StyleSheet.create({
   editionItemActive: {
     backgroundColor: Colors.surfaceElevated,
   },
+  editionItemLeft: {
+    flex: 1,
+    gap: 2,
+  },
   editionItemText: {
     color: Colors.textSecondary,
     fontSize: 13,
-    flex: 1,
   },
   editionItemTextActive: {
     color: Colors.primary,
     fontWeight: '600',
+  },
+  editionItemRarity: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontStyle: 'italic',
+  },
+  editionItemRarityActive: {
+    color: Colors.primary,
   },
   editionItemCode: {
     color: Colors.textMuted,

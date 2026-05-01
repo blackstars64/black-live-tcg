@@ -32,17 +32,23 @@ interface YgoApiResponse {
 }
 
 // ─── Normalisation ─────────────────────────────────────────────────
-function normalizeYgoCard(raw: YgoCardRaw, language: CardLanguage): Card {
+// displayName : nom dans la langue scannée (OCR) — null = utiliser le nom EN API
+function normalizeYgoCard(
+  raw: YgoCardRaw,
+  language: CardLanguage,
+  displayName?: string
+): Card {
   const primarySet = raw.card_sets?.[0];
 
   return {
     id: String(raw.id),
-    name: raw.name,
-    nameEn: raw.name,
+    name: displayName ?? raw.name,  // nom affiché = FR si fourni, EN sinon
+    nameEn: raw.name,               // toujours EN pour les lookups API/Cardmarket
     game: 'yugioh',
     set: primarySet?.set_name ?? '',
     setCode: primarySet?.set_code ?? '',
     number: primarySet?.set_number ?? '',
+    rarity: primarySet?.set_rarity ?? null,
     language,
     imageUrl: raw.card_images?.[0]?.image_url ?? null,
     oracleId: null,
@@ -142,19 +148,30 @@ export async function getYgoPrintings(cardId: string): Promise<Card[]> {
   const raw = await ygoFetch(`cardinfo.php?id=${encodeURIComponent(cardId)}`);
   if (!raw?.card_sets) return [];
 
-  return raw.card_sets.map((set) => ({
-    id: `${raw.id}-${set.set_code}`,
-    name: raw.name,
-    nameEn: raw.name,
-    game: 'yugioh' as const,
-    set: set.set_name,
-    setCode: set.set_code,
-    number: set.set_number,
-    language: 'en' as const,
-    imageUrl: raw.card_images?.[0]?.image_url ?? null,
-    oracleId: null,
-    cardmarketId: null,
-  }));
+  // Dédupliquer : même carte peut avoir même numéro en plusieurs raretés (ex: MAGO-EN002 Common + Super Rare)
+  // On utilise set_number comme clé (inclut déjà la rareté dans le set code YGO)
+  const seen = new Set<string>();
+  return raw.card_sets
+    .filter((set) => {
+      const key = `${set.set_number}-${set.set_rarity}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    })
+    .map((set) => ({
+      id: `${raw.id}-${set.set_number}`,
+      name: raw.name,
+      nameEn: raw.name,
+      game: 'yugioh' as const,
+      set: set.set_name,
+      setCode: set.set_code,
+      number: set.set_number,
+      rarity: set.set_rarity ?? null,
+      language: 'en' as const,
+      imageUrl: raw.card_images?.[0]?.image_url ?? null,
+      oracleId: null,
+      cardmarketId: null,
+    }));
 }
 
 // ─── Point d'entrée public ────────────────────────────────────────
@@ -180,9 +197,10 @@ export async function identifyYgoCard(
   if (fuzzyResult) return normalizeYgoCard(fuzzyResult, language);
 
   // Étape 3 : résolution langue→EN via API language param (6g)
+  // On passe ocrName comme displayName → affiche le nom FR sur la carte, nameEn reste EN
   if (language === 'fr' || language === 'de' || language === 'es' || language === 'it') {
     const enCard = await resolveYgoFrToEn(ocrName);
-    if (enCard) return normalizeYgoCard(enCard, language);
+    if (enCard) return normalizeYgoCard(enCard, language, ocrName);
   }
 
   return null;
