@@ -71,10 +71,60 @@ async function ygoFetch(endpoint: string): Promise<YgoCardRaw | null> {
   }
 }
 
+// ─── Résolution FR→EN (6g) ────────────────────────────────────────
+// Cherche par nom FR via language=fr → extrait l'id → refetch sans language pour le nom EN
+async function resolveYgoFrToEn(nameFr: string): Promise<YgoCardRaw | null> {
+  const encoded = encodeURIComponent(nameFr);
+
+  // Piste 1 : nom exact FR
+  const frExact = await ygoFetch(`cardinfo.php?name=${encoded}&language=fr`);
+  if (frExact) {
+    const enCard = await ygoFetch(`cardinfo.php?id=${frExact.id}`);
+    if (enCard) return enCard;
+  }
+
+  // Piste 1b : recherche partielle FR
+  const frFuzzy = await ygoFetch(`cardinfo.php?fname=${encoded}&language=fr`);
+  if (frFuzzy) {
+    const enCard = await ygoFetch(`cardinfo.php?id=${frFuzzy.id}`);
+    if (enCard) return enCard;
+  }
+
+  return null;
+}
+
+// ─── Toutes les impressions d'une carte (6c) ──────────────────────
+/**
+ * Retourne toutes les éditions disponibles pour une carte YGO depuis son ID.
+ * Les card_sets dans la réponse YGOPRODeck contiennent toutes les impressions.
+ */
+export async function getYgoPrintings(cardId: string): Promise<Card[]> {
+  const raw = await ygoFetch(`cardinfo.php?id=${encodeURIComponent(cardId)}`);
+  if (!raw?.card_sets) return [];
+
+  return raw.card_sets.map((set) => ({
+    id: `${raw.id}-${set.set_code}`,
+    name: raw.name,
+    nameEn: raw.name,
+    game: 'yugioh' as const,
+    set: set.set_name,
+    setCode: set.set_code,
+    number: set.set_number,
+    language: 'en' as const,
+    imageUrl: raw.card_images?.[0]?.image_url ?? null,
+    oracleId: null,
+    cardmarketId: null,
+  }));
+}
+
 // ─── Point d'entrée public ────────────────────────────────────────
 /**
  * Identifie une carte Yu-Gi-Oh depuis son nom OCR et sa langue détectée.
- * Stratégie : recherche exacte → recherche partielle (fname)
+ * Stratégie :
+ *   1. Recherche exacte par nom EN
+ *   2. Recherche partielle (fname = fuzzy)
+ *   3. Ordre des mots inversé — "Inclusion Christon" FR → "Christon Inclusion" EN (6a)
+ *   4. Résolution FR→EN via language=fr + refetch par ID (6g)
  */
 export async function identifyYgoCard(
   ocrName: string,
@@ -89,6 +139,25 @@ export async function identifyYgoCard(
   // Étape 2 : recherche partielle (fname = fuzzy name)
   const fuzzyResult = await ygoFetch(`cardinfo.php?fname=${encodedName}`);
   if (fuzzyResult) return normalizeYgoCard(fuzzyResult, language);
+
+  // Étape 3 : ordre des mots inversé (6a)
+  const words = ocrName.trim().split(/\s+/);
+  if (words.length > 1) {
+    const reversed = words.slice().reverse().join(' ');
+    const reversedEncoded = encodeURIComponent(reversed);
+
+    const reversedExact = await ygoFetch(`cardinfo.php?name=${reversedEncoded}`);
+    if (reversedExact) return normalizeYgoCard(reversedExact, language);
+
+    const reversedFuzzy = await ygoFetch(`cardinfo.php?fname=${reversedEncoded}`);
+    if (reversedFuzzy) return normalizeYgoCard(reversedFuzzy, language);
+  }
+
+  // Étape 4 : résolution FR→EN via API language=fr (6g)
+  if (language === 'fr' || language === 'de' || language === 'es' || language === 'it') {
+    const enCard = await resolveYgoFrToEn(ocrName);
+    if (enCard) return normalizeYgoCard(enCard, language);
+  }
 
   return null;
 }

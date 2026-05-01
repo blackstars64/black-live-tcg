@@ -129,10 +129,38 @@ async function scryfallSearchFetch(url: string): Promise<ScryfallCardRaw | null>
   }
 }
 
+// ─── Toutes les impressions d'une carte via oracle_id (6c) ───────
+/**
+ * Retourne toutes les impressions d'une carte MTG depuis son oracle_id.
+ * Utilisé pour le sélecteur d'édition dans l'écran résultat.
+ */
+export async function getMtgPrintings(oracleId: string): Promise<Card[]> {
+  await scryfallThrottle();
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const url = `${BASE_URL}/cards/search?q=oracleid:${encodeURIComponent(oracleId)}&unique=prints&order=released&dir=desc`;
+    const response = await fetch(url, { signal: controller.signal });
+    const json = (await response.json()) as ScryfallListRaw | ScryfallErrorRaw;
+
+    if (json.object === 'error' || json.object !== 'list') return [];
+
+    const list = json as ScryfallListRaw;
+    return list.data.map((raw) => normalizeScryfallCard(raw, 'en'));
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // ─── Point d'entrée public ────────────────────────────────────────
 /**
  * Identifie une carte MTG depuis son nom OCR et sa langue détectée.
  * Stratégie : langue détectée → EN fuzzy → fulltext search
+ * Logs de diagnostic à chaque étape (6d).
  */
 export async function identifyMtgCard(
   ocrName: string,
@@ -142,13 +170,13 @@ export async function identifyMtgCard(
   const scryfallLang = LANG_TO_SCRYFALL[language];
 
   // Étape 1 : recherche plein-texte dans la langue détectée
-  // q=culture lang:fr → cherche dans TOUT le texte FR (noms imprimés inclus)
-  // "culture" trouve "Rotation des cultures" car Scryfall indexe les noms FR
   if (scryfallLang && language !== 'en') {
     const langSearch = await scryfallSearchFetch(
       `${BASE_URL}/cards/search?q=${encodedName}+lang:${scryfallLang}&unique=prints&order=released`
     );
     if (langSearch) return normalizeScryfallCard(langSearch, language);
+
+    console.warn(`[scryfall] step1 miss — ocrName="${ocrName}" lang=${scryfallLang}`);
 
     // Étape 1b : premier mot (tolère les erreurs OCR sur la suite du nom)
     const firstWord = ocrName.trim().split(/\s+/)[0];
@@ -157,6 +185,7 @@ export async function identifyMtgCard(
         `${BASE_URL}/cards/search?q=${encodeURIComponent(firstWord)}+lang:${scryfallLang}&unique=prints&order=released`
       );
       if (firstWordSearch) return normalizeScryfallCard(firstWordSearch, language);
+      console.warn(`[scryfall] step1b miss — firstWord="${firstWord}"`);
     }
   }
 
@@ -165,12 +194,14 @@ export async function identifyMtgCard(
     `${BASE_URL}/cards/named?fuzzy=${encodedName}`
   );
   if (resultEn) return normalizeScryfallCard(resultEn, language);
+  console.warn(`[scryfall] step2 miss — fuzzy="${ocrName}"`);
 
   // Étape 3 : fulltext EN (dernier recours)
   const resultSearch = await scryfallSearchFetch(
     `${BASE_URL}/cards/search?q=name:${encodedName}&unique=cards&order=name`
   );
   if (resultSearch) return normalizeScryfallCard(resultSearch, language);
+  console.warn(`[scryfall] step3 miss — fulltext="${ocrName}" → null`);
 
   return null;
 }

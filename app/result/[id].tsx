@@ -1,7 +1,8 @@
 // ─── Écran Résultat de scan ───────────────────────────────────────
 // Affiche la carte identifiée + prix NM Cardmarket
 // Données lues depuis Zustand (scan store + historique)
-import { Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, Linking, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 
 // ─── Composants ───────────────────────────────────────────────────
@@ -11,11 +12,19 @@ import { PriceTag } from '../../components/card/PriceTag';
 // ─── Store ────────────────────────────────────────────────────────
 import { useScanStore, useHistoryStore } from '../../store';
 
+// ─── API impressions (sélecteur d'édition 6c) ────────────────────
+import { getMtgPrintings } from '../../lib/api/scryfall';
+import { getYgoPrintings } from '../../lib/api/ygoprodeck';
+import { getPokemonPrintings } from '../../lib/api/pokemon-tcg';
+import { getCardPrice } from '../../lib/price';
+
+// ─── Types ────────────────────────────────────────────────────────
+import type { Card, CardPrice } from '../../types/card';
+
 // ─── Constantes ───────────────────────────────────────────────────
 import { Colors } from '../../constants/colors';
 import { Layout } from '../../constants/layout';
 
-// Mapping source → libellé affiché
 const SOURCE_LABEL: Record<string, string> = {
   cardmarket: 'Cardmarket',
   fallback: 'API officielle (fallback)',
@@ -34,6 +43,74 @@ export default function ResultScreen() {
       ? currentResult
       : (scans.find((s) => s.card.id === id) ?? null);
 
+  // ─── État local ───────────────────────────────────────────────────
+  const [selectedCard, setSelectedCard] = useState<Card | null>(null);
+  const [currentPrice, setCurrentPrice] = useState<CardPrice | null>(null);
+  const [printings, setPrintings] = useState<Card[]>([]);
+  const [showEditions, setShowEditions] = useState(false);
+  const [loadingPrintings, setLoadingPrintings] = useState(false);
+  const [loadingPrice, setLoadingPrice] = useState(false);
+
+  // ─── Init depuis le résultat store ───────────────────────────────
+  useEffect(() => {
+    if (!result) return;
+    setSelectedCard(result.card);
+    setCurrentPrice(result.price);
+    loadPrintings(result.card);
+  }, [result?.card.id]);
+
+  async function loadPrintings(card: Card): Promise<void> {
+    setLoadingPrintings(true);
+    try {
+      let fetched: Card[] = [];
+      if (card.game === 'mtg' && card.oracleId) {
+        fetched = await getMtgPrintings(card.oracleId);
+      } else if (card.game === 'yugioh') {
+        // L'id YGO est le numéro de la carte (ex: "12345") — on strip le suffix "-SET"
+        const baseId = card.id.split('-')[0];
+        fetched = await getYgoPrintings(baseId);
+      } else if (card.game === 'pokemon' && card.nameEn) {
+        fetched = await getPokemonPrintings(card.nameEn);
+      }
+      setPrintings(fetched);
+    } finally {
+      setLoadingPrintings(false);
+    }
+  }
+
+  // ─── Changement d'édition (6c + 6b) ──────────────────────────────
+  async function handleEditionChange(printing: Card): Promise<void> {
+    if (!result) return;
+    setSelectedCard(printing);
+    setShowEditions(false);
+    setLoadingPrice(true);
+    try {
+      const priceResult = await getCardPrice(
+        printing.id,
+        printing.nameEn,
+        printing.game,
+        result.card.language, // langue du scan d'origine
+        printing.set,
+        printing.number
+      );
+      setCurrentPrice(
+        priceResult
+          ? {
+              cardId: printing.id,
+              language: priceResult.language,
+              condition: priceResult.condition,
+              priceNmLow: priceResult.priceNmLow,
+              currency: priceResult.currency,
+              fetchedAt: priceResult.fetchedAt,
+              cardmarketUrl: priceResult.productUrl,
+            }
+          : null
+      );
+    } finally {
+      setLoadingPrice(false);
+    }
+  }
+
   // ─── Résultat introuvable ─────────────────────────────────────────
   if (!result) {
     return (
@@ -46,10 +123,9 @@ export default function ResultScreen() {
     );
   }
 
-  const { card, price, confidence, scannedAt } = result;
-
-  // Source du prix (cardmarket / fallback / cache) — encodée dans fetchedAt via store
-  // On récupère la source depuis le store si disponible
+  const card = selectedCard ?? result.card;
+  const price = currentPrice ?? result.price;
+  const { confidence, scannedAt } = result;
   const priceSource = price ? 'cardmarket' : null;
 
   return (
@@ -95,12 +171,63 @@ export default function ResultScreen() {
         language={card.language}
       />
 
+      {/* ─── Sélecteur d'édition (6c) ────────────────────────────────── */}
+      {loadingPrintings ? (
+        <View style={styles.editionLoading}>
+          <ActivityIndicator size="small" color={Colors.primary} />
+          <Text style={styles.editionLoadingText}>Chargement des éditions…</Text>
+        </View>
+      ) : printings.length > 1 ? (
+        <View style={styles.editionSection}>
+          <Pressable
+            style={styles.editionToggleRow}
+            onPress={() => setShowEditions((v) => !v)}
+          >
+            <Text style={styles.editionToggleLabel}>
+              {card.set || 'Édition'}{card.setCode ? ` (${card.setCode})` : ''}
+            </Text>
+            <Text style={styles.editionToggleChevron}>
+              {showEditions ? '▲' : `▾ ${printings.length} éditions`}
+            </Text>
+          </Pressable>
+
+          {showEditions && (
+            <View style={styles.editionList}>
+              {printings.map((printing) => {
+                const isActive = card.setCode === printing.setCode && card.number === printing.number;
+                return (
+                  <Pressable
+                    key={`${printing.id}-${printing.setCode}-${printing.number}`}
+                    style={[styles.editionItem, isActive && styles.editionItemActive]}
+                    onPress={() => handleEditionChange(printing)}
+                  >
+                    <Text style={[styles.editionItemText, isActive && styles.editionItemTextActive]}>
+                      {printing.set}
+                    </Text>
+                    <Text style={[styles.editionItemCode, isActive && styles.editionItemCodeActive]}>
+                      {[printing.setCode, printing.number].filter(Boolean).join(' · ')}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+          )}
+        </View>
+      ) : null}
+
       {/* ─── Prix NM ─────────────────────────────────────────────────── */}
-      <PriceTag
-        price={price?.priceNmLow ?? null}
-        language={card.language}
-        condition="NM"
-      />
+      {loadingPrice ? (
+        <View style={styles.priceLoading}>
+          <ActivityIndicator size="small" color={Colors.primary} />
+          <Text style={styles.priceLoadingText}>Récupération du prix…</Text>
+        </View>
+      ) : (
+        <PriceTag
+          price={price?.priceNmLow ?? null}
+          language={card.language}
+          condition="NM"
+        />
+      )}
 
       {/* ─── Lien Cardmarket ─────────────────────────────────────────── */}
       {price?.cardmarketUrl && (
@@ -196,6 +323,87 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     fontSize: 13,
   },
+
+  // ─── Sélecteur d'édition ──────────────────────────────────────────
+  editionSection: {
+    backgroundColor: Colors.surface,
+    borderRadius: Layout.radius,
+    borderWidth: 1,
+    borderColor: Colors.border,
+    overflow: 'hidden',
+  },
+  editionLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 4,
+  },
+  editionLoadingText: {
+    color: Colors.textMuted,
+    fontSize: 13,
+  },
+  editionToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: Layout.padding,
+  },
+  editionToggleLabel: {
+    color: Colors.text,
+    fontSize: 14,
+    fontWeight: '600',
+    flex: 1,
+  },
+  editionToggleChevron: {
+    color: Colors.primary,
+    fontSize: 13,
+    fontWeight: '600',
+  },
+  editionList: {
+    borderTopWidth: 1,
+    borderColor: Colors.border,
+  },
+  editionItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: Layout.padding,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderColor: Colors.border,
+  },
+  editionItemActive: {
+    backgroundColor: Colors.surfaceElevated,
+  },
+  editionItemText: {
+    color: Colors.textSecondary,
+    fontSize: 13,
+    flex: 1,
+  },
+  editionItemTextActive: {
+    color: Colors.primary,
+    fontWeight: '600',
+  },
+  editionItemCode: {
+    color: Colors.textMuted,
+    fontSize: 12,
+  },
+  editionItemCodeActive: {
+    color: Colors.primary,
+  },
+
+  // ─── Prix ─────────────────────────────────────────────────────────
+  priceLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  priceLoadingText: {
+    color: Colors.textMuted,
+    fontSize: 13,
+  },
+
   cardmarketButton: {
     backgroundColor: Colors.surface,
     borderRadius: Layout.radius,
