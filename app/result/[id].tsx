@@ -78,15 +78,25 @@ export default function ResultScreen() {
     setLoadingPrintings(true);
     try {
       let fetched: Card[] = [];
+
       if (card.game === 'mtg' && card.oracleId) {
         fetched = await getMtgPrintings(card.oracleId);
+
       } else if (card.game === 'yugioh') {
-        // L'id YGO est le numéro de la carte (ex: "12345") — on strip le suffix "-SET"
         const baseId = card.id.split('-')[0];
         fetched = await getYgoPrintings(baseId);
-      } else if (card.game === 'pokemon' && card.nameEn) {
-        fetched = await getPokemonPrintings(card.nameEn);
+
+      } else if (card.game === 'pokemon') {
+        // Essayer nameEn d'abord (EN → meilleur résultat API)
+        if (card.nameEn && card.nameEn.length > 1) {
+          fetched = await getPokemonPrintings(card.nameEn);
+        }
+        // Si nameEn est en français (OCR FR sans identification réussie) → essayer avec le nom affiché
+        if (fetched.length === 0 && card.name !== card.nameEn && card.name.length > 1) {
+          fetched = await getPokemonPrintings(card.name);
+        }
       }
+
       setPrintings(fetched);
     } finally {
       setLoadingPrintings(false);
@@ -206,7 +216,7 @@ export default function ResultScreen() {
           <ActivityIndicator size="small" color={Colors.primary} />
           <Text style={styles.editionLoadingText}>Chargement des éditions…</Text>
         </View>
-      ) : printings.length > 1 ? (
+      ) : printings.length > 0 ? (
         <View style={styles.editionSection}>
           <Pressable
             style={styles.editionToggleRow}
@@ -216,7 +226,11 @@ export default function ResultScreen() {
               {card.set || 'Édition'}{card.setCode ? ` (${card.setCode})` : ''}
             </Text>
             <Text style={styles.editionToggleChevron}>
-              {showEditions ? '▲' : `▾ ${printings.length} éditions`}
+              {showEditions
+                ? '▲'
+                : printings.length > 1
+                  ? `▾ ${printings.length} éditions`
+                  : '▾ détails édition'}
             </Text>
           </Pressable>
 

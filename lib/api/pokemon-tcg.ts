@@ -155,13 +155,43 @@ export async function identifyPokemonByNumber(
 // ─── Toutes les impressions d'une carte (6c) ──────────────────────
 /**
  * Retourne toutes les impressions d'une carte Pokémon depuis son nom EN.
- * PokéAPI ne supporte que les noms anglais.
+ * Stratégie : exact (guillemets) → partial (sans guillemets, filtré par nom exact)
+ * Cela retourne toutes les raretés d'une même carte (common, holo, full art, rainbow…)
  */
 export async function getPokemonPrintings(nameEn: string): Promise<Card[]> {
-  const results = await pokemonFetchAll(
+  if (!nameEn || nameEn.length < 2) return [];
+
+  // Essai 1 : recherche exacte avec guillemets
+  const exactResults = await pokemonFetchAll(
     `q=name:"${encodeURIComponent(nameEn)}"`
   );
-  return results.map((raw) => normalizePokemonCard(raw, 'en'));
+
+  // Si l'exact retourne des résultats suffisants → utiliser
+  if (exactResults.length >= 2) {
+    console.log(`[pokemon] printings "${nameEn}" exact: ${exactResults.length}`);
+    return exactResults.map((raw) => normalizePokemonCard(raw, 'en'));
+  }
+
+  // Essai 2 : recherche partielle sans guillemets (attrape plus de variantes)
+  // Filtrage strict par nom exact côté app pour éviter les faux positifs
+  const partialResults = await pokemonFetchAll(
+    `q=name:${encodeURIComponent(nameEn)}`
+  );
+  const filtered = partialResults.filter(
+    (raw) => raw.name.toLowerCase() === nameEn.toLowerCase()
+  );
+
+  console.log(`[pokemon] printings "${nameEn}" partial: ${partialResults.length} → filtered: ${filtered.length}`);
+
+  // Fusionner exact + filtered, dédupliquer par id
+  const seen = new Set<string>();
+  const merged = [...exactResults, ...filtered].filter((raw) => {
+    if (seen.has(raw.id)) return false;
+    seen.add(raw.id);
+    return true;
+  });
+
+  return merged.map((raw) => normalizePokemonCard(raw, 'en'));
 }
 
 // ─── Point d'entrée public ────────────────────────────────────────
