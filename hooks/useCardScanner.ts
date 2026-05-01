@@ -52,12 +52,13 @@ export function useCardScanner() {
           return;
         }
 
-        // Étape 3 : Identification — lookup direct (set+numéro) puis nom
+        // Étape 3 : pHash → set+numéro → Gemini → nom
         const identification = await identifyCardCached(
           rawName,
           game,
           ocr.language,
-          ocrResult.identifiers
+          ocrResult.identifiers,
+          imageUri  // passé au pHash + Gemini
         );
 
         const card = identification?.card ?? {

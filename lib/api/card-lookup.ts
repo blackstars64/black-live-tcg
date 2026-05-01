@@ -1,10 +1,12 @@
 // ─── Routeur d'identification universel ──────────────────────────
-// Pipeline : identifiants directs (set+numéro) → nom → null
+// Pipeline : pHash → set+numéro → Gemini → nom → null
 
 // ─── Imports ─────────────────────────────────────────────────────
 import { identifyMtgCard, identifyMtgByNumber } from './scryfall';
 import { identifyPokemonCard, identifyPokemonByNumber } from './pokemon-tcg';
 import { identifyYgoCard, identifyYgoByNumber, identifyYgoByPasscode } from './ygoprodeck';
+import { findCardByHash, isPHashReady } from '../phash/matcher';
+import { identifyCardWithGemini, geminiResultToCard, isGeminiAvailable } from '../ai/gemini-scanner';
 import type { Card, GameType, CardLanguage } from '../../types/card';
 import type { CardIdentifiers } from '../ocr/extractor';
 
@@ -12,8 +14,8 @@ import type { CardIdentifiers } from '../ocr/extractor';
 export interface IdentificationResult {
   card: Card;
   confidence: number;
-  source: 'scryfall' | 'pokemon-tcg' | 'ygoprodeck';
-  method: 'direct' | 'name'; // comment la carte a été trouvée
+  source: 'scryfall' | 'pokemon-tcg' | 'ygoprodeck' | 'phash' | 'gemini';
+  method: 'phash' | 'direct' | 'gemini' | 'name';
 }
 
 // ─── Cache session ────────────────────────────────────────────────
@@ -102,22 +104,76 @@ async function identifyByName(
 // ─── Point d'entrée principal ─────────────────────────────────────
 /**
  * Identifie une carte TCG.
- * Ordre : lookup direct (set+numéro) → recherche par nom.
- * Le lookup direct est 100% fiable quand le numéro est lisible par l'OCR.
+ * Pipeline : pHash (offline) → set+numéro (direct) → Gemini (vision AI) → nom (fuzzy)
  */
 export async function identifyCard(
   ocrName: string,
   game: GameType,
   language: CardLanguage,
-  identifiers?: CardIdentifiers
+  identifiers?: CardIdentifiers,
+  imageUri?: string
 ): Promise<IdentificationResult | null> {
-  // Étape 1 : lookup direct par identifiants (set+numéro)
+  // Étape 1 : pHash local (offline, ~50ms, si DB disponible)
+  if (imageUri && isPHashReady()) {
+    const phashMatch = await findCardByHash(imageUri, game).catch(() => null);
+    if (phashMatch && phashMatch.confidence >= 0.85) {
+      // Enrichir avec les données API complètes (image, set complet…)
+      const apiResult = await identifyByIdentifiers(
+        {
+          ygoCardNumber: null, ygoPasscode: null,
+          mtgSetCode: null, mtgCollectorNumber: null,
+          pokemonNumber: phashMatch.number || null,
+          pokemonTotal: null, pokemonSetCode: phashMatch.setCode || null,
+        },
+        phashMatch.game,
+        language,
+        phashMatch.nameEn
+      );
+      if (apiResult) return { ...apiResult, method: 'phash', source: 'phash' };
+
+      // Fallback : utiliser les données pHash directement
+      const card: Card = {
+        id: phashMatch.cardId,
+        name: phashMatch.nameEn,
+        nameEn: phashMatch.nameEn,
+        game: phashMatch.game,
+        set: phashMatch.setName,
+        setCode: phashMatch.setCode,
+        number: phashMatch.number,
+        rarity: phashMatch.rarity,
+        language,
+        imageUrl: phashMatch.imageUrl,
+        oracleId: null,
+        cardmarketId: null,
+      };
+      return { card, confidence: phashMatch.confidence, source: 'phash', method: 'phash' };
+    }
+  }
+
+  // Étape 2 : lookup direct par set+numéro OCR
   if (identifiers) {
     const direct = await identifyByIdentifiers(identifiers, game, language, ocrName);
     if (direct) return direct;
   }
 
-  // Étape 2 : recherche par nom (fuzzy)
+  // Étape 3 : Gemini Flash (si disponible et quota non épuisé)
+  if (imageUri && isGeminiAvailable()) {
+    const gemini = await identifyCardWithGemini(imageUri, game).catch(() => null);
+    if (gemini && gemini.confidence >= 0.5) {
+      // Enrichir via API pour avoir l'image haute qualité
+      const apiResult = await identifyByName(gemini.nameEn, gemini.game, language).catch(() => null);
+      if (apiResult) return { ...apiResult, method: 'gemini', source: 'gemini' };
+
+      return {
+        card: geminiResultToCard(gemini),
+        confidence: gemini.confidence,
+        source: 'gemini',
+        method: 'gemini',
+      };
+    }
+  }
+
+  // Étape 4 : recherche par nom OCR (dernier recours)
   if (ocrName.length > 1) {
     return identifyByName(ocrName, game, language);
   }
@@ -130,7 +186,8 @@ export async function identifyCardCached(
   ocrName: string,
   game: GameType,
   language: CardLanguage,
-  identifiers?: CardIdentifiers
+  identifiers?: CardIdentifiers,
+  imageUri?: string
 ): Promise<IdentificationResult | null> {
   // Clé de cache : numéro de carte si disponible, sinon nom
   const key = cacheKey(
@@ -146,7 +203,7 @@ export async function identifyCardCached(
 
   if (sessionCache.has(key)) return sessionCache.get(key)!;
 
-  const result = await identifyCard(ocrName, game, language, identifiers);
+  const result = await identifyCard(ocrName, game, language, identifiers, imageUri);
   if (result !== null) sessionCache.set(key, result);
   return result;
 }

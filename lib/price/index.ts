@@ -1,13 +1,11 @@
 // ─── Pipeline orchestrateur des prix ─────────────────────────────
-// Priorité : cache local → scraping Cardmarket → fallback API → null
-//
-// Session A implémente : scrapePriceFromSearch() et scrapePriceFromUrl()
-// dans lib/price/scraper.ts — importé ici mais stubé tant que Session A n'a pas pushé.
+// Priorité : cache local → backend proxy → scraping WebView → fallback API
 import type { CardLanguage, GameType } from '../../types/card';
 import { getCachedPrice, setCachedPrice, initPriceCache } from './cache';
 import { fetchFallbackPrice } from './fallback';
 import { enqueueRequest, isCircuitOpen, recordSuccess, recordFailure } from './ratelimit';
 import { scrapePriceFromSearch, scrapePriceFromUrl } from './scraper';
+import { fetchPriceFromProxy, isProxyConfigured } from './proxy';
 import type { ScraperResult } from './scraper';
 
 export interface PriceResult {
@@ -49,7 +47,30 @@ export async function getCardPrice(
     };
   }
 
-  // Étape 2 : scraping Cardmarket via queue rate-limitée
+  // Étape 2 : backend proxy Vercel (priorité si configuré)
+  if (isProxyConfigured()) {
+    const proxy = await fetchPriceFromProxy({ game, nameEn, language, setName, cardNumber });
+    if (proxy.price !== null) {
+      await setCachedPrice({
+        cardId, language,
+        priceNmLow: proxy.price,
+        priceTrend: null,
+        productUrl: proxy.productUrl,
+        fetchedAt: Date.now(),
+        source: 'cardmarket',
+      });
+      return {
+        priceNmLow: proxy.price,
+        priceTrend: null,
+        language, condition: 'NM', currency: 'EUR',
+        source: 'cardmarket',
+        productUrl: proxy.productUrl,
+        fetchedAt: new Date().toISOString(),
+      };
+    }
+  }
+
+  // Étape 3 : scraping direct mobile (circuit breaker — bloqué par Cloudflare)
   if (!isCircuitOpen()) {
     try {
       const scraperResult = await enqueueRequest(() =>
@@ -60,8 +81,7 @@ export async function getCardPrice(
 
       if (scraperResult.priceNmLow !== null) {
         await setCachedPrice({
-          cardId,
-          language,
+          cardId, language,
           priceNmLow: scraperResult.priceNmLow,
           priceTrend: scraperResult.priceTrend,
           productUrl: scraperResult.productUrl,
@@ -72,15 +92,13 @@ export async function getCardPrice(
         return {
           priceNmLow: scraperResult.priceNmLow,
           priceTrend: scraperResult.priceTrend,
-          language,
-          condition: 'NM',
-          currency: 'EUR',
+          language, condition: 'NM', currency: 'EUR',
           source: 'cardmarket',
           productUrl: scraperResult.productUrl,
           fetchedAt: new Date().toISOString(),
         };
       }
-    } catch (e) {
+    } catch {
       recordFailure();
     }
   }

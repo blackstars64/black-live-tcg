@@ -1,0 +1,21 @@
+{
+  "name": "build-phash-db",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "npx tsx build-phash-db.ts",
+    "mtg": "npx tsx build-phash-db.ts --game mtg",
+    "pokemon": "npx tsx build-phash-db.ts --game pokemon",
+    "yugioh": "npx tsx build-phash-db.ts --game yugioh"
+  },
+  "dependencies": {
+    "better-sqlite3": "^9.4.3",
+    "sharp": "^0.33.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.8",
+    "@types/node": "^20.12.7",
+    "tsx": "^4.7.3",
+    "typescript": "^5.4.5"
+  }
+}
