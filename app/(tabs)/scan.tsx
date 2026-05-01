@@ -1,6 +1,6 @@
 // ─── Écran Scanner ────────────────────────────────────────────────
 import { useEffect, useRef, useState, useCallback } from 'react';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as SecureStore from 'expo-secure-store';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -35,7 +35,7 @@ export default function ScanScreen() {
 
   // Charger le dernier jeu sélectionné au démarrage
   useEffect(() => {
-    AsyncStorage.getItem('lastGame').then((saved) => {
+    SecureStore.getItemAsync('lastGame').then((saved) => {
       if (saved === 'mtg' || saved === 'pokemon' || saved === 'yugioh') {
         setSelectedGame(saved);
       }
@@ -44,7 +44,7 @@ export default function ScanScreen() {
 
   const handleSelectGame = useCallback((game: GameType) => {
     setSelectedGame(game);
-    AsyncStorage.setItem('lastGame', game);
+    SecureStore.setItemAsync('lastGame', game);
   }, []);
   const [permission, requestPermission] = useCameraPermissions();
   const [manualName, setManualName] = useState('');

@@ -25,7 +25,9 @@
       "package": "com.blackstars64.blacklivetcg",
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png",
@@ -39,7 +41,8 @@
           "cameraPermission": "BlackLiveTCG a besoin de la caméra pour scanner vos cartes TCG."
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-secure-store"
     ]
   }
 }
