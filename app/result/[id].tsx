@@ -8,6 +8,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 // ─── Composants ───────────────────────────────────────────────────
 import { CardResult } from '../../components/card/CardResult';
 import { PriceTag } from '../../components/card/PriceTag';
+import { CardmarketScraper } from '../../components/price/CardmarketScraper';
 
 // ─── Store ────────────────────────────────────────────────────────
 import { useScanStore, useHistoryStore } from '../../store';
@@ -17,6 +18,7 @@ import { getMtgPrintings } from '../../lib/api/scryfall';
 import { getYgoPrintings } from '../../lib/api/ygoprodeck';
 import { getPokemonPrintings } from '../../lib/api/pokemon-tcg';
 import { getCardPrice } from '../../lib/price';
+import { buildCmProductUrl, buildCmSearchUrl } from '../../lib/price/cardmarket-urls';
 
 // ─── Types ────────────────────────────────────────────────────────
 import type { Card, CardPrice } from '../../types/card';
@@ -50,6 +52,7 @@ export default function ResultScreen() {
   const [showEditions, setShowEditions] = useState(false);
   const [loadingPrintings, setLoadingPrintings] = useState(false);
   const [loadingPrice, setLoadingPrice] = useState(false);
+  const [scraperUrl, setScraperUrl] = useState<string | null>(null);
 
   // ─── Init depuis le résultat store ───────────────────────────────
   useEffect(() => {
@@ -90,37 +93,39 @@ export default function ResultScreen() {
     }
   }
 
+  // ─── Lancer le scraper WebView Cardmarket ─────────────────────────
+  function startCmScraper(card: Card, language = result?.card.language ?? 'fr'): void {
+    // Essayer d'abord l'URL directe produit (plus précise), sinon recherche
+    const productUrl = card.set
+      ? buildCmProductUrl(card.game, card.nameEn, card.set, language)
+      : buildCmSearchUrl(card.game, card.nameEn, language);
+    setScraperUrl(productUrl);
+    setLoadingPrice(true);
+  }
+
+  // ─── Résultat du scraper WebView ──────────────────────────────────
+  function handleScraperResult(result_: { price: number | null; productUrl: string | null }): void {
+    setScraperUrl(null);
+    setLoadingPrice(false);
+    if (result_.price !== null) {
+      setCurrentPrice((prev) => ({
+        cardId: selectedCard?.id ?? result?.card.id ?? '',
+        language: result?.card.language ?? 'fr',
+        condition: 'NM',
+        priceNmLow: result_.price,
+        currency: 'EUR',
+        fetchedAt: new Date().toISOString(),
+        cardmarketUrl: result_.productUrl,
+      }));
+    }
+  }
+
   // ─── Changement d'édition (6c + 6b) ──────────────────────────────
-  async function handleEditionChange(printing: Card): Promise<void> {
+  function handleEditionChange(printing: Card): void {
     if (!result) return;
     setSelectedCard(printing);
     setShowEditions(false);
-    setLoadingPrice(true);
-    try {
-      const priceResult = await getCardPrice(
-        printing.id,
-        printing.nameEn,
-        printing.game,
-        result.card.language, // langue du scan d'origine
-        printing.set,
-        printing.number
-      );
-      setCurrentPrice(
-        priceResult
-          ? {
-              cardId: printing.id,
-              language: priceResult.language,
-              condition: priceResult.condition,
-              priceNmLow: priceResult.priceNmLow,
-              currency: priceResult.currency,
-              fetchedAt: priceResult.fetchedAt,
-              cardmarketUrl: priceResult.productUrl,
-            }
-          : null
-      );
-    } finally {
-      setLoadingPrice(false);
-    }
+    startCmScraper(printing);
   }
 
   // ─── Résultat introuvable ─────────────────────────────────────────
@@ -137,10 +142,22 @@ export default function ResultScreen() {
 
   const card = selectedCard ?? result.card;
   const price = currentPrice ?? result.price;
+
+  // ─── Scraper WebView (invisible) ─────────────────────────────────
+  // Monté uniquement quand une URL est définie → se démonte après résultat
+  const scraperNode = scraperUrl ? (
+    <CardmarketScraper
+      key={scraperUrl}
+      url={scraperUrl}
+      onResult={handleScraperResult}
+    />
+  ) : null;
   const { confidence, scannedAt } = result;
   const priceSource = price ? 'cardmarket' : null;
 
   return (
+    <>
+      {scraperNode}
     <ScrollView
       style={styles.scroll}
       contentContainerStyle={styles.container}
@@ -248,15 +265,36 @@ export default function ResultScreen() {
         />
       )}
 
-      {/* ─── Lien Cardmarket ─────────────────────────────────────────── */}
-      {price?.cardmarketUrl && (
+      {/* ─── Actions Cardmarket ──────────────────────────────────────── */}
+      <View style={styles.cmActions}>
+        {/* Actualiser le prix via WebView */}
         <Pressable
-          style={styles.cardmarketButton}
-          onPress={() => Linking.openURL(price.cardmarketUrl!)}
+          style={[styles.cmRefreshButton, loadingPrice && styles.cmRefreshButtonDisabled]}
+          onPress={() => startCmScraper(card)}
+          disabled={loadingPrice}
         >
-          <Text style={styles.cardmarketButtonText}>Voir sur Cardmarket ↗</Text>
+          <Text style={styles.cmRefreshButtonText}>
+            {loadingPrice ? 'Récupération…' : '↻ Prix Cardmarket réel'}
+          </Text>
         </Pressable>
-      )}
+
+        {/* Ouvrir sur Cardmarket */}
+        {price?.cardmarketUrl ? (
+          <Pressable
+            style={styles.cardmarketButton}
+            onPress={() => Linking.openURL(price.cardmarketUrl!)}
+          >
+            <Text style={styles.cardmarketButtonText}>Voir sur Cardmarket ↗</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            style={styles.cardmarketButton}
+            onPress={() => Linking.openURL(buildCmSearchUrl(card.game, card.nameEn, card.language))}
+          >
+            <Text style={styles.cardmarketButtonText}>Chercher sur Cardmarket ↗</Text>
+          </Pressable>
+        )}
+      </View>
 
       {/* ─── Métadonnées ─────────────────────────────────────────────── */}
       <View style={styles.meta}>
@@ -281,6 +319,7 @@ export default function ResultScreen() {
         </View>
       </View>
     </ScrollView>
+    </>
   );
 }
 
@@ -434,6 +473,24 @@ const styles = StyleSheet.create({
     fontSize: 13,
   },
 
+  cmActions: {
+    gap: 10,
+  },
+  cmRefreshButton: {
+    backgroundColor: Colors.primary,
+    borderRadius: Layout.radius,
+    paddingHorizontal: 20,
+    paddingVertical: 14,
+    alignItems: 'center',
+  },
+  cmRefreshButtonDisabled: {
+    opacity: 0.5,
+  },
+  cmRefreshButtonText: {
+    color: '#000',
+    fontSize: 15,
+    fontWeight: '700',
+  },
   cardmarketButton: {
     backgroundColor: Colors.surface,
     borderRadius: Layout.radius,
