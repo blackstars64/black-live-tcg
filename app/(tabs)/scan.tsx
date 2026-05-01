@@ -1,5 +1,6 @@
 // ─── Écran Scanner ────────────────────────────────────────────────
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   Keyboard,
   KeyboardAvoidingView,
@@ -30,7 +31,21 @@ const GAMES: { id: GameType; label: string }[] = [
 export default function ScanScreen() {
   const router = useRouter();
   const cameraRef = useRef<CameraView>(null);
-  const [selectedGame, setSelectedGame] = useState<GameType>('mtg');
+  const [selectedGame, setSelectedGame] = useState<GameType>('pokemon');
+
+  // Charger le dernier jeu sélectionné au démarrage
+  useEffect(() => {
+    AsyncStorage.getItem('lastGame').then((saved) => {
+      if (saved === 'mtg' || saved === 'pokemon' || saved === 'yugioh') {
+        setSelectedGame(saved);
+      }
+    });
+  }, []);
+
+  const handleSelectGame = useCallback((game: GameType) => {
+    setSelectedGame(game);
+    AsyncStorage.setItem('lastGame', game);
+  }, []);
   const [permission, requestPermission] = useCameraPermissions();
   const [manualName, setManualName] = useState('');
   const [showManual, setShowManual] = useState(false);
@@ -102,7 +117,7 @@ export default function ScanScreen() {
           <Pressable
             key={game.id}
             style={[styles.gamePill, selectedGame === game.id && styles.gamePillActive]}
-            onPress={() => setSelectedGame(game.id)}
+            onPress={() => handleSelectGame(game.id)}
           >
             <Text style={[styles.gamePillText, selectedGame === game.id && styles.gamePillTextActive]}>
               {game.label}

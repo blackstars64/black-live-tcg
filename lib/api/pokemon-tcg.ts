@@ -10,6 +10,24 @@ import type { Card, CardLanguage } from '../../types/card';
 const BASE_URL = 'https://api.pokemontcg.io/v2';
 const TIMEOUT_MS = 8_000;
 
+// Mapping code OCR imprimé sur la carte → set.id API Pokémon TCG
+// Code OCR = texte après le "/" dans "042/091 SVI" ou le ptcgoCode du set
+const POKEMON_SET_CODE_MAP: Record<string, string> = {
+  // Scarlet & Violet (sv*)
+  SVI: 'sv1',    PAL: 'sv2',    OBF: 'sv3',    PAR: 'sv4',
+  PAF: 'sv4pt5', TWM: 'sv6',    SCR: 'sv7',    SSP: 'sv8',
+  PRE: 'sv8pt5', MEW: 'mew',    SFA: 'sv5',
+  // Sword & Shield (swsh*)
+  BST: 'swsh5',  CRE: 'swsh6',  EVS: 'swsh7',  FST: 'swsh8',
+  BRS: 'swsh9',  ASR: 'swsh10', LOR: 'swsh11', SIT: 'swsh12',
+  CRZ: 'swsh12pt5', PGO: 'pgo', CEL: 'cel25',
+  // Sun & Moon (sm*)
+  SUM: 'sm1',    GRI: 'sm2',    BUS: 'sm3',    CIN: 'sm35',
+  UPR: 'sm5',    FLI: 'sm6',    CES: 'sm7',    LOT: 'sm8',
+  TEU: 'sm9',    UNB: 'sm10',   UNM: 'sm11',   HIF: 'sm115',
+  CEC: 'sm12',   SSH: 'swsh1',
+};
+
 // ─── Types réponse Pokémon TCG API ────────────────────────────────
 interface PokemonCardRaw {
   id: string;
@@ -93,6 +111,43 @@ async function pokemonFetchAll(query: string): Promise<PokemonCardRaw[]> {
   } finally {
     clearTimeout(timer);
   }
+}
+
+// ─── Lookup direct par numéro de carte Pokémon ───────────────────
+/**
+ * Recherche Pokémon par numéro + set code (le plus direct) ou numéro+nom (fallback).
+ * setCode : code OCR imprimé sur la carte (ex: "SVI" → "sv1" via mapping)
+ */
+export async function identifyPokemonByNumber(
+  number: string,
+  total: string | null,
+  language: CardLanguage,
+  nameHint?: string,
+  setCode?: string | null
+): Promise<Card | null> {
+  // Étape 1 : set code connu → lookup direct setId+numéro (100% précis)
+  if (setCode) {
+    const setId = POKEMON_SET_CODE_MAP[setCode.toUpperCase()];
+    if (setId) {
+      // Essai via ID composé : "{setId}-{number}" (ex: "sv1-042")
+      const directId = await pokemonFetch(`q=${encodeURIComponent(`number:${number} set.id:${setId}`)}`);
+      if (directId) return normalizePokemonCard(directId, language);
+    }
+  }
+
+  // Étape 2 : numéro + nom (si set inconnu mais nom disponible)
+  if (nameHint && nameHint.length > 2) {
+    const withName = await pokemonFetch(
+      `q=${encodeURIComponent(`number:${number} name:${nameHint}`)}`
+    );
+    if (withName) return normalizePokemonCard(withName, language);
+  }
+
+  // Étape 3 : numéro seul → set le plus récent (orderBy=-set.releaseDate)
+  const byNumber = await pokemonFetch(`q=${encodeURIComponent(`number:${number}`)}`);
+  if (byNumber) return normalizePokemonCard(byNumber, language);
+
+  return null;
 }
 
 // ─── Toutes les impressions d'une carte (6c) ──────────────────────

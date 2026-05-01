@@ -9,7 +9,7 @@ import { useOcr } from './useOcr';
 import { useScanStore } from '../store';
 
 // ─── Lib ──────────────────────────────────────────────────────────
-import { extractCardName, normalizeCardName } from '../lib/ocr/extractor';
+import { extractOcrResult, normalizeCardName } from '../lib/ocr/extractor';
 import { identifyCardCached } from '../lib/api/card-lookup';
 import { getCardPrice } from '../lib/price';
 
@@ -37,16 +37,28 @@ export function useCardScanner() {
           return;
         }
 
-        // Étape 2 : Extraction nom depuis le texte brut OCR
-        const rawName = extractCardName(ocr.text);
+        // Étape 2 : Extraction nom + identifiants (set+numéro) depuis l'OCR
+        const ocrResult = extractOcrResult(ocr.text, game);
+        const rawName = ocrResult.name;
         const nameEn = normalizeCardName(rawName);
-        if (!nameEn) {
-          setError('Nom de carte non détecté — réessayer');
+
+        const hasIdentifiers =
+          !!ocrResult.identifiers.ygoCardNumber ||
+          !!(ocrResult.identifiers.mtgSetCode && ocrResult.identifiers.mtgCollectorNumber) ||
+          !!ocrResult.identifiers.pokemonNumber;
+
+        if (!nameEn && !hasIdentifiers) {
+          setError('Carte non détectée — repositionner ou saisir manuellement');
           return;
         }
 
-        // Étape 3 : Identification via API (Scryfall / PokéAPI / YGOPRODeck)
-        const identification = await identifyCardCached(rawName, game, ocr.language);
+        // Étape 3 : Identification — lookup direct (set+numéro) puis nom
+        const identification = await identifyCardCached(
+          rawName,
+          game,
+          ocr.language,
+          ocrResult.identifiers
+        );
 
         const card = identification?.card ?? {
           // Fallback stub OCR — si aucune API ne répond

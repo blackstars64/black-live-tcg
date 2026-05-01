@@ -129,6 +129,23 @@ async function scryfallSearchFetch(url: string): Promise<ScryfallCardRaw | null>
   }
 }
 
+// ─── Lookup direct par set + numéro de collection ─────────────────
+/**
+ * Lookup exact Scryfall : /cards/{set}/{collectorNumber}
+ * Identifie la carte sans nom — 100% fiable si le set code est lisible par l'OCR.
+ */
+export async function identifyMtgByNumber(
+  setCode: string,
+  collectorNumber: string,
+  language: CardLanguage
+): Promise<Card | null> {
+  const card = await scryfallFetch(
+    `${BASE_URL}/cards/${encodeURIComponent(setCode)}/${encodeURIComponent(collectorNumber)}`
+  );
+  if (card) return normalizeScryfallCard(card, language);
+  return null;
+}
+
 // ─── Toutes les impressions d'une carte via oracle_id (6c) ───────
 /**
  * Retourne toutes les impressions d'une carte MTG depuis son oracle_id.

@@ -1,30 +1,28 @@
 // ─── Routeur d'identification universel ──────────────────────────
-// Dispatche vers le bon client API selon le jeu sélectionné.
-// Fallback automatique sur les autres jeux si le principal échoue.
-// Cache session en mémoire pour éviter les requêtes dupliquées.
+// Pipeline : identifiants directs (set+numéro) → nom → null
 
 // ─── Imports ─────────────────────────────────────────────────────
-import { identifyMtgCard } from './scryfall';
-import { identifyPokemonCard } from './pokemon-tcg';
-import { identifyYgoCard } from './ygoprodeck';
+import { identifyMtgCard, identifyMtgByNumber } from './scryfall';
+import { identifyPokemonCard, identifyPokemonByNumber } from './pokemon-tcg';
+import { identifyYgoCard, identifyYgoByNumber, identifyYgoByPasscode } from './ygoprodeck';
 import type { Card, GameType, CardLanguage } from '../../types/card';
+import type { CardIdentifiers } from '../ocr/extractor';
 
 // ─── Types ───────────────────────────────────────────────────────
 export interface IdentificationResult {
   card: Card;
-  confidence: number; // 0-1 — confiance sur l'identification (pas l'OCR)
+  confidence: number;
   source: 'scryfall' | 'pokemon-tcg' | 'ygoprodeck';
+  method: 'direct' | 'name'; // comment la carte a été trouvée
 }
 
 // ─── Cache session ────────────────────────────────────────────────
-// Évite de re-requêter la même carte pendant la même session app
-const sessionCache = new Map<string, IdentificationResult | null>();
+const sessionCache = new Map<string, IdentificationResult>();
 
-function cacheKey(name: string, game: GameType, lang: CardLanguage): string {
-  return `${name.toLowerCase()}:${game}:${lang}`;
+function cacheKey(key: string, game: GameType, lang: CardLanguage): string {
+  return `${key.toLowerCase()}:${game}:${lang}`;
 }
 
-// ─── Mapping jeu → source ─────────────────────────────────────────
 function gameToSource(game: GameType): 'scryfall' | 'pokemon-tcg' | 'ygoprodeck' {
   const map: Record<GameType, 'scryfall' | 'pokemon-tcg' | 'ygoprodeck'> = {
     mtg: 'scryfall',
@@ -34,12 +32,56 @@ function gameToSource(game: GameType): 'scryfall' | 'pokemon-tcg' | 'ygoprodeck'
   return map[game];
 }
 
-// ─── Identification principale ────────────────────────────────────
+// ─── Lookup direct par identifiants (set+numéro) ──────────────────
 /**
- * Identifie une carte via l'API du jeu sélectionné.
- * Si le jeu principal échoue, essaie les autres (cas : mauvais jeu sélectionné).
+ * Tente un lookup exact via les identifiants extraits de la carte.
+ * Confiance 1.0 — le numéro de carte est unique dans son set.
  */
-export async function identifyCard(
+async function identifyByIdentifiers(
+  identifiers: CardIdentifiers,
+  game: GameType,
+  language: CardLanguage,
+  nameHint?: string
+): Promise<IdentificationResult | null> {
+  let card: Card | null = null;
+
+  if (game === 'yugioh') {
+    // Passcode en priorité (identifiant universel, 1 seul appel)
+    if (identifiers.ygoPasscode) {
+      card = await identifyYgoByPasscode(identifiers.ygoPasscode, language).catch(() => null);
+    }
+    // Fallback : numéro de set (ex: MAGO-EN002)
+    if (!card && identifiers.ygoCardNumber) {
+      card = await identifyYgoByNumber(identifiers.ygoCardNumber, language).catch(() => null);
+    }
+  }
+
+  if (game === 'mtg' && identifiers.mtgSetCode && identifiers.mtgCollectorNumber) {
+    card = await identifyMtgByNumber(
+      identifiers.mtgSetCode,
+      identifiers.mtgCollectorNumber,
+      language
+    ).catch(() => null);
+  }
+
+  if (game === 'pokemon' && identifiers.pokemonNumber) {
+    card = await identifyPokemonByNumber(
+      identifiers.pokemonNumber,
+      identifiers.pokemonTotal,
+      language,
+      nameHint,
+      identifiers.pokemonSetCode
+    ).catch(() => null);
+  }
+
+  if (card) {
+    return { card, confidence: 1.0, source: gameToSource(game), method: 'direct' };
+  }
+  return null;
+}
+
+// ─── Identification par nom ────────────────────────────────────────
+async function identifyByName(
   ocrName: string,
   game: GameType,
   language: CardLanguage
@@ -50,31 +92,61 @@ export async function identifyCard(
     yugioh: () => identifyYgoCard(ocrName, language),
   };
 
-  // Tentative principale — jeu confirmé par l'utilisateur
   const card = await handlers[game]().catch(() => null);
   if (card) {
-    return { card, confidence: 0.9, source: gameToSource(game) };
+    return { card, confidence: 0.85, source: gameToSource(game), method: 'name' };
   }
-
-  // Pas de fallback cross-jeu — l'utilisateur a sélectionné le jeu explicitement
-  // Un fallback vers YGO/Pokémon sur une carte MTG retournerait de faux résultats
   return null;
 }
 
-// ─── Identification avec cache session ────────────────────────────
+// ─── Point d'entrée principal ─────────────────────────────────────
 /**
- * Wrapper de identifyCard avec cache en mémoire (durée de vie = session app).
- * Utiliser cette fonction dans les hooks — jamais identifyCard directement.
+ * Identifie une carte TCG.
+ * Ordre : lookup direct (set+numéro) → recherche par nom.
+ * Le lookup direct est 100% fiable quand le numéro est lisible par l'OCR.
  */
+export async function identifyCard(
+  ocrName: string,
+  game: GameType,
+  language: CardLanguage,
+  identifiers?: CardIdentifiers
+): Promise<IdentificationResult | null> {
+  // Étape 1 : lookup direct par identifiants (set+numéro)
+  if (identifiers) {
+    const direct = await identifyByIdentifiers(identifiers, game, language, ocrName);
+    if (direct) return direct;
+  }
+
+  // Étape 2 : recherche par nom (fuzzy)
+  if (ocrName.length > 1) {
+    return identifyByName(ocrName, game, language);
+  }
+
+  return null;
+}
+
+// ─── Avec cache session ───────────────────────────────────────────
 export async function identifyCardCached(
   ocrName: string,
   game: GameType,
-  language: CardLanguage
+  language: CardLanguage,
+  identifiers?: CardIdentifiers
 ): Promise<IdentificationResult | null> {
-  const key = cacheKey(ocrName, game, language);
-  if (sessionCache.has(key)) return sessionCache.get(key) ?? null;
+  // Clé de cache : numéro de carte si disponible, sinon nom
+  const key = cacheKey(
+    identifiers?.ygoPasscode
+      ?? identifiers?.ygoCardNumber
+      ?? identifiers?.pokemonNumber
+      ?? (identifiers?.mtgSetCode && identifiers?.mtgCollectorNumber
+        ? `${identifiers.mtgSetCode}-${identifiers.mtgCollectorNumber}`
+        : ocrName),
+    game,
+    language
+  );
 
-  const result = await identifyCard(ocrName, game, language);
-  if (result !== null) sessionCache.set(key, result); // ne cacher que les succès
+  if (sessionCache.has(key)) return sessionCache.get(key)!;
+
+  const result = await identifyCard(ocrName, game, language, identifiers);
+  if (result !== null) sessionCache.set(key, result);
   return result;
 }

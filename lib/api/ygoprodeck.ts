@@ -71,6 +71,60 @@ async function ygoFetch(endpoint: string): Promise<YgoCardRaw | null> {
   }
 }
 
+// ─── Lookup direct YGO par passcode (identifiant universel) ──────
+/**
+ * Passcode 8 chiffres = identifiant unique par carte, indépendant de la langue/édition.
+ * C'est le moyen le plus fiable pour identifier une carte YGO depuis l'OCR.
+ */
+export async function identifyYgoByPasscode(
+  passcode: string,
+  language: CardLanguage
+): Promise<Card | null> {
+  const result = await ygoFetch(`cardinfo.php?id=${encodeURIComponent(passcode)}`);
+  if (result) return normalizeYgoCard(result, language);
+  return null;
+}
+
+// ─── Lookup direct par numéro de set YGO ─────────────────────────
+/**
+ * Lookup par numéro de set (ex: "MAGO-EN002") via cardsetsinfo.php.
+ * Si le numéro FR/DE/IT ne retourne rien → conversion vers EN.
+ */
+export async function identifyYgoByNumber(
+  cardNumber: string,
+  language: CardLanguage
+): Promise<Card | null> {
+  // cardsetsinfo.php retourne le set info + card_id → on refetch par id
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const response = await fetch(
+      `${BASE_URL}/cardsetsinfo.php?setcode=${encodeURIComponent(cardNumber)}`,
+      { signal: controller.signal }
+    );
+    if (response.ok) {
+      const json = await response.json() as { id?: number };
+      if (json?.id) {
+        const card = await ygoFetch(`cardinfo.php?id=${json.id}`);
+        if (card) return normalizeYgoCard(card, language);
+      }
+    }
+  } catch {
+    // fallback
+  } finally {
+    clearTimeout(timer);
+  }
+
+  // Fallback : convertir FR/DE/IT → EN et réessayer
+  const enNumber = cardNumber.replace(/-(?:FR|DE|ES|IT|PT|RU|KR|JA|ZH)(\d{3})$/, '-EN$1');
+  if (enNumber !== cardNumber) {
+    return identifyYgoByNumber(enNumber, language);
+  }
+
+  return null;
+}
+
 // ─── Résolution FR→EN (6g) ────────────────────────────────────────
 // fname (fuzzy) + language=fr → id → refetch sans language pour le nom EN (2 appels max)
 async function resolveYgoFrToEn(nameFr: string): Promise<YgoCardRaw | null> {
