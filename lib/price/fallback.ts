@@ -24,8 +24,8 @@ function fetchWithTimeout(url: string, options?: RequestInit): Promise<Response>
 }
 
 // ─── MTG → Scryfall ───────────────────────────────────────────────
-// Les cartes non-EN ont prices: null sur Scryfall.
-// Stratégie : trouver la carte (FR ou EN), extraire les prix depuis la version EN.
+// Scryfall `prices.eur` = prix Cardmarket officiel (partenariat).
+// Toujours utiliser le nom EN → carte EN → prices.eur.
 async function fetchScryfallPrice(
   name: string,
   language: CardLanguage
@@ -36,9 +36,8 @@ async function fetchScryfallPrice(
 
     type ScryfallRaw = {
       object?: string;
-      prices?: { eur?: string | null; usd?: string | null };
-      name?: string;   // nom EN toujours présent
-      oracle_id?: string;
+      prices?: { eur?: string | null; eur_foil?: string | null; usd?: string | null };
+      name?: string;
       data?: ScryfallRaw[];
     };
 
@@ -52,16 +51,16 @@ async function fetchScryfallPrice(
     }
 
     function extractPrice(card: ScryfallRaw): number | null {
+      // prices.eur = prix Cardmarket NM EN. Priorité EUR sur USD.
       const eur = card.prices?.eur ? parseFloat(card.prices.eur) : null;
       const usd = card.prices?.usd ? parseFloat(card.prices.usd) : null;
       return eur ?? (usd != null ? Math.round(usd * 0.92 * 100) / 100 : null);
     }
 
-    // Étape 1 : trouver la carte dans la langue détectée (plein-texte FR)
-    // → Scryfall indexe les noms imprimés FR : "culture" trouve "Rotation des cultures"
+    // Étape 1 : chercher la version FR pour récupérer le nom EN exact
     if (scryfallLang && language !== 'en') {
       const frCard = await fetchCard(
-        `https://api.scryfall.com/cards/search?q=${encoded}+lang:${scryfallLang}&unique=prints&order=released`
+        `https://api.scryfall.com/cards/search?q=name:${encoded}+lang:${scryfallLang}&unique=prints&order=released`
       );
 
       if (frCard) {
