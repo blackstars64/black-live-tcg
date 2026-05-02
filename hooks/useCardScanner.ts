@@ -30,39 +30,46 @@ export function useCardScanner() {
     async (imageUri: string, game: GameType): Promise<void> => {
       setScanning(true);
       try {
-        // Étape 1 : OCR on-device via ML Kit
+        // Étape 1 : OCR on-device via ML Kit (optionnel — pHash + Gemini n'en ont pas besoin)
         const ocr = await recognizeFromUri(imageUri);
-        if (!ocr) {
-          setError('Aucun texte détecté — repositionner la carte');
-          return;
-        }
 
-        // Étape 2 : Extraction nom + identifiants (set+numéro) depuis l'OCR
-        const ocrResult = extractOcrResult(ocr.text, game);
+        // Étape 2 : Extraction nom + identifiants depuis l'OCR (peut être vide si ML Kit échoue)
+        const EMPTY_IDENTIFIERS = {
+          ygoCardNumber: null, ygoPasscode: null,
+          mtgSetCode: null, mtgCollectorNumber: null,
+          pokemonNumber: null, pokemonTotal: null, pokemonSetCode: null,
+        };
+        const ocrResult = ocr
+          ? extractOcrResult(ocr.text, game)
+          : { name: '', identifiers: EMPTY_IDENTIFIERS };
+
         const rawName = ocrResult.name;
         const nameEn = normalizeCardName(rawName);
+        const language = ocr?.language ?? 'fr';
 
         const hasIdentifiers =
           !!ocrResult.identifiers.ygoCardNumber ||
           !!(ocrResult.identifiers.mtgSetCode && ocrResult.identifiers.mtgCollectorNumber) ||
           !!ocrResult.identifiers.pokemonNumber;
 
-        if (!nameEn && !hasIdentifiers) {
-          setError('Carte non détectée — repositionner ou saisir manuellement');
-          return;
-        }
-
         // Étape 3 : pHash → set+numéro → Gemini → nom
+        // On passe toujours imageUri : pHash + Gemini identifient depuis l'image seule
         const identification = await identifyCardCached(
           rawName,
           game,
-          ocr.language,
+          language,
           ocrResult.identifiers,
-          imageUri  // passé au pHash + Gemini
+          imageUri
         );
 
+        // Si rien n'a fonctionné (pHash miss + Gemini miss + OCR vide) → erreur
+        if (!identification && !nameEn && !hasIdentifiers) {
+          setError('Carte non identifiée — repositionner ou saisir manuellement');
+          return;
+        }
+
         const card = identification?.card ?? {
-          // Fallback stub OCR — si aucune API ne répond
+          // Stub OCR — identification partielle (nom extrait mais API en échec)
           id: `ocr-${Date.now()}`,
           name: rawName,
           nameEn,
@@ -71,24 +78,24 @@ export function useCardScanner() {
           setCode: '',
           number: '',
           rarity: null,
-          language: ocr.language,
+          language,
           imageUrl: null,
           oracleId: null,
           cardmarketId: null,
         };
 
-        // Confiance finale = OCR × identification (pénalité si stub)
+        // Confiance finale = OCR × identification (pénalité si stub ou OCR absent)
+        const ocrConfidence = ocr?.confidence ?? 0.5;
         const finalConfidence = identification
-          ? Math.min(ocr.confidence, identification.confidence)
-          : ocr.confidence * 0.5;
+          ? Math.min(ocrConfidence, identification.confidence)
+          : ocrConfidence * 0.5;
 
-        // Étape 4 : Prix NM — pipeline cache → scraping Cardmarket → fallback API
-        // On passe set + number pour améliorer le matching Cardmarket
+        // Étape 4 : Prix NM
         const priceResult = await getCardPrice(
           card.id,
           card.nameEn,
           card.game,
-          ocr.language,
+          language,
           card.set,
           card.number
         );
