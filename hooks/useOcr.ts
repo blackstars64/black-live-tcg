@@ -36,7 +36,7 @@ export function useOcr(): {
       // Trier les blocs par position Y croissante (haut de la carte = petit Y)
       // Le nom TCG est toujours dans le bloc le plus haut
       const sortedBlocks = [...blocks].sort(
-        (a, b) => (a.frame?.y ?? 0) - (b.frame?.y ?? 0)
+        (a, b) => (a.frame?.top ?? 0) - (b.frame?.top ?? 0)
       );
       const sortedText = sortedBlocks.map((b) => b.text).join('\n');
 
