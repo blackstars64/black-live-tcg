@@ -15,8 +15,8 @@ const TIMEOUT_MS = 8_000;
 const POKEMON_SET_CODE_MAP: Record<string, string> = {
   // Scarlet & Violet (sv*)
   SVI: 'sv1',    PAL: 'sv2',    OBF: 'sv3',    PAR: 'sv4',
-  PAF: 'sv4pt5', TWM: 'sv6',    SCR: 'sv7',    SSP: 'sv8',
-  PRE: 'sv8pt5', MEW: 'mew',    SFA: 'sv5',
+  PAF: 'sv4pt5', TEF: 'sv5',    TWM: 'sv6',    SFA: 'sv6pt5',
+  SCR: 'sv7',    SSP: 'sv8',    PRE: 'sv8pt5', MEW: 'mew',
   // Sword & Shield (swsh*)
   BST: 'swsh5',  CRE: 'swsh6',  EVS: 'swsh7',  FST: 'swsh8',
   BRS: 'swsh9',  ASR: 'swsh10', LOR: 'swsh11', SIT: 'swsh12',

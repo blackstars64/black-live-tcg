@@ -52,10 +52,15 @@ const YGO_CARD_NUMBER = /\b([A-Z]{2,6})-([A-Z]{2})(\d{3})\b/;
 // YGO — Passcode 8 chiffres (identifiant unique toutes langues, bottom left)
 const YGO_PASSCODE = /(?<!\d)(\d{8})(?!\d)/;
 
-// MTG : "MOM 247" ou "MOM 0247" ou "MOM 247/271 R" — set code + numéro
-const MTG_SET_NUMBER = /\b([A-Z]{2,5})\s+0*(\d{1,4})(?:\/\d{1,4})?\b/;
-// Fallback : fraction seule "247/271"
+// MTG : set code (3-5 lettres) + numéro adjacent : "MOM 247" ou "WOE 0123/271"
+// [A-Z]{3,5} exclut les codes langue 2-char (EN, FR, DE…)
+const MTG_SET_NUMBER = /\b([A-Z]{3,5})\s+0*(\d{1,4})(?:\/\d{1,4})?\b/;
+// Numéro/total seul : "247/271"
 const MTG_COLLECTOR_ONLY = /\b(\d{1,4})\/(\d{1,4})\b/;
+// Rareté + set code : "R MOM" | "C WOE" | "M LCI"
+const MTG_RARITY_SET = /\b[CURMS]\s+([A-Z]{3,5})\b/;
+// Set code + (bullet optionnel) + code langue : "MOM • EN" | "MOM EN" | "WOE·FR"
+const MTG_SET_LANG = /\b([A-Z]{3,5})\s*[•·]?\s*(?:EN|FR|DE|ES|IT|JA|KO|PT|RU|ZH)\b/;
 
 // Pokémon — Standard : "042/091" | Avec code set : "042/091 SVI" | TG : "TG12/TG30"
 const POKEMON_WITH_SET = /\b(\d{1,3})\/(\d{2,3})\s+([A-Z]{2,5})\b/;
@@ -115,9 +120,18 @@ export function extractCardIdentifiers(
       result.mtgSetCode = matchFull[1].toLowerCase();
       result.mtgCollectorNumber = matchFull[2];
     } else {
-      const matchNum = MTG_COLLECTOR_ONLY.exec(rawText);
-      if (matchNum) {
-        result.mtgCollectorNumber = matchNum[1];
+      // Extraction séparée : set code et numéro peuvent ne pas être adjacents.
+      // Cas réel : "R MOM • EN" sur une ligne, "247/271" ailleurs.
+      const numMatch = MTG_COLLECTOR_ONLY.exec(rawText);
+      if (numMatch) {
+        result.mtgCollectorNumber = numMatch[1];
+      }
+      const setCode =
+        MTG_RARITY_SET.exec(rawText)?.[1] ??
+        MTG_SET_LANG.exec(rawText)?.[1] ??
+        null;
+      if (setCode) {
+        result.mtgSetCode = setCode.toLowerCase();
       }
     }
   }
