@@ -197,6 +197,10 @@ function scoreLine(line: string): number {
   // Variant Pokémon standalone ("VSTAR", "VMAX" seul) → bannière, pas le nom
   if (POKEMON_STANDALONE_VARIANT.test(line.trim())) score -= 12;
 
+  // Code tout-majuscules 2-5 chars : set code, langue, rareté (SVI, BRS, BASG, EN, R…)
+  // Les noms de cartes sont en title case, jamais en full caps courts
+  if (/^[A-Z]{2,5}$/.test(line.trim())) score -= 8;
+
   return score;
 }
 

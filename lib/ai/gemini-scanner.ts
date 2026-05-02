@@ -11,7 +11,7 @@ import type { Card, CardLanguage, GameType } from '../../types/card';
 // ─── Config ───────────────────────────────────────────────────────
 
 const API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY ?? '';
-const MODEL   = 'gemini-1.5-flash';  // gemini-2.0-flash nécessite billing activé
+const MODEL   = 'gemini-2.0-flash-lite';  // free tier sans billing (2.0-flash requiert billing)
 const MAX_RPM = 12; // 12/min → marge sous les 15 gratuits
 
 // ─── Rate limiter ─────────────────────────────────────────────────
