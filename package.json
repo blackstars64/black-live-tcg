@@ -4,7 +4,9 @@
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
-    "android": "expo run:android",
+    "android": "expo run:android --no-bundler",
+    "android:full": "expo run:android",
+    "android:deploy": "bash scripts/android-deploy.sh",
     "ios": "expo run:ios",
     "web": "expo start --web"
   },

@@ -17,6 +17,7 @@ const MAX_RPM = 12; // 12/min → marge sous les 15 gratuits
 // ─── Rate limiter ─────────────────────────────────────────────────
 
 const requestTimestamps: number[] = [];
+let geminiCooldownUntil = 0;
 
 function canMakeRequest(): boolean {
   const now = Date.now();
@@ -35,6 +36,13 @@ function msUntilSlot(): number {
   if (canMakeRequest()) return 0;
   const oldest = requestTimestamps[0];
   return Math.max(0, 60_000 - (Date.now() - oldest) + 100);
+}
+
+function parse429RetryDelay(err: unknown): number {
+  const msg = err instanceof Error ? err.message : String(err);
+  // Parse "retryDelay":"55s" depuis le body de l'erreur Google
+  const match = /retryDelay['":\s]+(\d+)s/.exec(msg);
+  return match ? parseInt(match[1], 10) : 60;
 }
 
 // ─── Cache SQLite ─────────────────────────────────────────────────
@@ -188,7 +196,14 @@ export async function identifyCardWithGemini(
     console.log(`[gemini] identifié: ${parsed.nameEn} (${parsed.game}) conf=${parsed.confidence}`);
     return parsed;
   } catch (err) {
-    console.error('[gemini] erreur:', err);
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('429')) {
+      const delay = parse429RetryDelay(err);
+      geminiCooldownUntil = Date.now() + delay * 1_000;
+      console.warn(`[gemini] quota 429 — cooldown ${delay}s (dispo ${new Date(geminiCooldownUntil).toLocaleTimeString()})`);
+    } else {
+      console.error('[gemini] erreur:', err);
+    }
     return null;
   }
 }
@@ -217,5 +232,5 @@ export function geminiResultToCard(r: GeminiResult, imageUri?: string): Card {
  * Vérifie si Gemini peut traiter une requête maintenant (sans attendre).
  */
 export function isGeminiAvailable(): boolean {
-  return !!API_KEY && canMakeRequest();
+  return !!API_KEY && canMakeRequest() && Date.now() >= geminiCooldownUntil;
 }

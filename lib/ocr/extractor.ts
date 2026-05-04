@@ -213,14 +213,22 @@ function deduplicateLeadingVariant(name: string): string {
   if (words.length < 2) return name;
 
   const VARIANT = /^(vstar|vmax|vunion|gx|ex|mega|v)$/i;
-  if (VARIANT.test(words[0])) {
-    const rest = words.slice(1).join(' ');
-    // Si le variant du début réapparaît dans le reste → doublon OCR
-    if (new RegExp(`\\b${words[0]}\\b`, 'i').test(rest)) {
-      return rest;
-    }
-  }
-  return name;
+  const leadVariant = words[0];
+  if (!VARIANT.test(leadVariant)) return name;
+
+  const rest = words.slice(1).join(' ');
+
+  // Chercher le variant sans exiger une word boundary : couvre "GivraliVsTAR"
+  // (l'OCR colle le nom et le logo VSTAR en un seul token)
+  if (!new RegExp(leadVariant, 'i').test(rest)) return name;
+
+  // Normaliser : insérer un espace si le variant est collé au nom
+  // "GivraliVsTAR" → "Givrali VSTAR"
+  const LEAD_UPPER = leadVariant.toUpperCase();
+  return rest.replace(
+    new RegExp(`([\\wàâäéèêëïîôùûüç])(${leadVariant})$`, 'i'),
+    (_m, before) => `${before} ${LEAD_UPPER}`
+  );
 }
 
 // ─── Extraction du nom ────────────────────────────────────────────
